@@ -13,6 +13,7 @@ final class ProtocoloTests: XCTestCase {
             Protocolo.UUIDs.nav,
             Protocolo.UUIDs.gps,
             Protocolo.UUIDs.status,
+            Protocolo.UUIDs.movil,
         ]
         for uuid in todos {
             XCTAssertEqual(uuid.count, 36, uuid)
