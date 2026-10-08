@@ -242,6 +242,9 @@ void setup() {
 }
 
 void loop() {
+    // Las marcas de tiempo que se toman más tarde en esta misma vuelta pueden
+    // ser posteriores a `ahora`: por eso todas las comparaciones son con signo,
+    // (int32_t)(ahora - t), como en Movil_BLE.cpp del cuadro
     uint32_t ahora = millis();
     uint16_t c = conexion;
 
@@ -278,7 +281,7 @@ void loop() {
     // Pedir el cifrado un poco después de conectar, si el iPhone no lo ha
     // hecho ya (con el vínculo guardado no sale ningún aviso en el iPhone)
     if (c != BLE_HS_CONN_HANDLE_NONE && !cifrado && !seguridadPedida &&
-        ahora - tConexion >= SEGURIDAD_MS) {
+        (int32_t)(ahora - tConexion) >= (int32_t)SEGURIDAD_MS) {
         seguridadPedida = true;
         int rc = 0;
         if (!BLESecurity::startSecurity(c, &rc)) Serial.printf("[REF] ERROR al pedir el cifrado: %d\n", rc);
@@ -287,30 +290,30 @@ void loop() {
     if (movilNuevo) procesarMovil();
 
     // STATUS de mantenimiento (§9)
-    if (c != BLE_HS_CONN_HANDLE_NONE && cifrado && suscrito && ahora - tStatus >= MANTENIMIENTO_MS) {
+    if (c != BLE_HS_CONN_HANDLE_NONE && cifrado && suscrito && (int32_t)(ahora - tStatus) >= (int32_t)MANTENIMIENTO_MS) {
         enviarStatus();
     }
 
     // Latido sin conexión: así se ve que el sketch está vivo aunque el monitor
     // serie se abra después del arranque y se pierdan las primeras líneas
-    if (c == BLE_HS_CONN_HANDLE_NONE && ahora - tLatido >= LATIDO_MS) {
+    if (c == BLE_HS_CONN_HANDLE_NONE && (int32_t)(ahora - tLatido) >= (int32_t)LATIDO_MS) {
         tLatido = ahora;
         Serial.printf("[REF] Sin conexión; anunciándose como \"%s\" (%lu s desde el arranque)\n",
                       NOMBRE, (unsigned long)(ahora / 1000));
     }
 
     // Caducidad (§10)
-    if (!caducado && ahora - tUltimoMovil > CADUCIDAD_MS) {
+    if (!caducado && (int32_t)(ahora - tUltimoMovil) > (int32_t)CADUCIDAD_MS) {
         caducado = true;
         Serial.println("[REF] Sin datos del móvil desde hace 5 s: dato caducado");
     }
 
     // Volver a anunciarse tras desconectar, y pasar al anuncio lento a los 30 s
-    if (reanuncioPendiente && c == BLE_HS_CONN_HANDLE_NONE && ahora - tDesconexion >= REANUNCIO_MS) {
+    if (reanuncioPendiente && c == BLE_HS_CONN_HANDLE_NONE && (int32_t)(ahora - tDesconexion) >= (int32_t)REANUNCIO_MS) {
         reanuncioPendiente = false;
         anunciarRapido();
     }
-    if (anuncioRapido && ahora - tAnuncio >= ANUNCIO_RAPIDO_MS) {
+    if (anuncioRapido && (int32_t)(ahora - tAnuncio) >= (int32_t)ANUNCIO_RAPIDO_MS) {
         anuncioRapido = false;
         BLEAdvertising * anuncio = BLEDevice::getAdvertising();
         if (anuncio->isAdvertising() && conexion == BLE_HS_CONN_HANDLE_NONE) {
