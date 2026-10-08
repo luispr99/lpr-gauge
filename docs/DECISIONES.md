@@ -96,14 +96,45 @@ final.
 
 ## Pendiente de decidir
 
-- **Tecnología para iOS y Android** (React Native, Flutter, Kotlin Multiplatform
-  o dos apps nativas). En estudio.
-- **Flechas con Apple Maps:** hay que confirmar si `MKRoute.Step` da el tipo de
-  maniobra o solo texto. Si solo da texto, las flechas se deducirían de la
-  geometría de la ruta y del texto, o se usaría un motor de rutas que dé el tipo
-  de giro.
-- **Google en Android:** condiciones de uso para guiar en tiempo real y si exige
-  cuenta de facturación.
+### Tecnología para iOS y Android
+
+Opciones: React Native, Flutter, Kotlin Multiplatform o dos apps nativas. En
+estudio. Comprobado el 2026-10-08:
+
+- React Native permite llamar a las API de Apple con módulos nativos en Swift
+  (Expo Modules API, licencia MIT) [F14].
+- React Native no tiene ningún mecanismo oficial para ejecutar JavaScript en
+  segundo plano en iOS: Headless JS es solo de Android [F15]. Con React Native, lo
+  que tiene que funcionar con la pantalla bloqueada (GPS, cálculo de metros y BLE)
+  iría en código nativo de cada sistema, y solo se compartiría la interfaz.
+
+### De dónde salen las rutas y las flechas
+
+Comprobado el 2026-10-08:
+
+- **Apple Maps:**
+  - `MKRoute.Step` da el texto de la instrucción (en el idioma del iPhone), la
+    distancia del paso y su trazado. No hay ningún tipo de maniobra [F16].
+  - No da guía en vivo: la cuenta atrás de metros, el paso a la siguiente
+    instrucción y el recálculo los tiene que hacer la app. Los límites de uso no
+    se publican (error `loadingThrottled`) [F16].
+  - Falta probar que `MKDirections` responda en una app firmada con Apple ID
+    gratuito: la nota de Apple al respecto es ambigua [F5].
+  - Condiciones (orientativo; debe revisarlo una persona): para uso personal
+    parece encajar. Para un producto, los acuerdos de Apple limitan el uso de sus
+    datos de mapas fuera de la app y sin su mapa [F17].
+- **Google Routes API:** da el tipo de maniobra, pero exige una cuenta de
+  facturación con método de pago aunque no se supere el uso gratuito [F18]. Choca
+  con «nada de pago, sin cuenta obligatoria».
+- **Valhalla con Ferrostar:**
+  - Valhalla (MIT) da el tipo de maniobra, tiene un modo moto (en beta) e
+    instrucciones en español.
+  - Ferrostar (BSD-3) hace el guiado en iOS y en Android [F19].
+  - El servidor público de FOSSGIS admite un uso razonable, como mucho una
+    petición por segundo [F20]. Para un producto haría falta un servidor propio.
+
+### Otros
+
 - **Apple ID para firmar:** el principal o uno secundario.
 - **Altitud:** del GPS o del barómetro del móvil.
 
@@ -153,3 +184,18 @@ final.
   Apple): https://developer.apple.com/forums/thread/844579
 - [F13] Apple, TN3115:
   https://developer.apple.com/documentation/technotes/tn3115-bluetooth-state-restoration-app-relaunch-rules
+- [F14] Módulos nativos: https://docs.expo.dev/modules/overview/ ·
+  https://reactnative.dev/docs/native-platform
+- [F15] React Native, Headless JS: https://reactnative.dev/docs/headless-js-android
+- [F16] Apple, MapKit:
+  https://developer.apple.com/documentation/mapkit/mkroute/step ·
+  https://developer.apple.com/documentation/mapkit/mkdirections
+- [F17] Apple, acuerdos: DPLA, anexo 6,
+  https://developer.apple.com/support/terms/apple-developer-program-license-agreement/ ·
+  Xcode and Apple SDKs Agreement, §2.11, https://www.apple.com/legal/sla/docs/xcode.pdf
+- [F18] Google Routes API:
+  https://developers.google.com/maps/documentation/routes/reference/rest/v2/TopLevel/computeRoutes ·
+  https://developers.google.com/maps/documentation/routes/usage-and-billing
+- [F19] https://github.com/valhalla/valhalla · https://stadiamaps.github.io/ferrostar/
+- [F20] FOSSGIS, condiciones de uso de sus servidores:
+  https://fossgis.de/arbeitsgruppen/osm-server/nutzungsbedingungen/
