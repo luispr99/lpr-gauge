@@ -85,6 +85,18 @@ final.
 - Librería BLE: la del core arduino-esp32, la misma que usa el cuadro. En el
   ESP32-S3 va sobre NimBLE; en el ESP32 clásico, sobre Bluedroid
   (comprobado en el `sdkconfig` del core 3.3.8 instalado, 2026-10-08).
+- **Probado en la placa (2026-10-08, según el autor):** el sketch
+  `firmware/referencia_esp32` compila en el IDE de Arduino. Con LightBlue en el
+  iPhone y el valor de prueba `01 07 02 55` escrito a mano:
+  - la placa se anuncia como «LPR Gauge»;
+  - conecta, cifra el enlace y envía *Service Changed*;
+  - acepta y quita la suscripción a `STATUS`;
+  - descodifica `MOVIL` («seq 7: batería cargando, 85 %»);
+  - marca el dato como caducado a los 5 s sin mensajes.
+- Falta probarlo con la app, enviando la batería real del iPhone.
+- **Monitor serie:** solo muestra algo si el puerto USB y la opción «USB CDC On
+  Boot» casan (CH343 con Disabled; USB nativo con Enabled), como ya pasó en el
+  cuadro.
 
 ## Privacidad
 
