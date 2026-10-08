@@ -18,8 +18,22 @@ final.
 ### 2026-10-08 · Plataformas
 
 - Primero iPhone. El móvil de pruebas principal tiene iOS 27.
-- Android más adelante. El código debe servir para los dos sistemas en todo lo
-  posible: la tecnología está [pendiente de decidir](#pendiente-de-decidir).
+- Android más adelante.
+
+### 2026-10-08 · Tecnología: Swift nativo en iPhone; Android nativo después
+
+- **Planteamiento anterior, del mismo día:** que el mismo código sirviera para
+  iPhone y Android, con una tecnología multiplataforma.
+- **Decisión:** app de iPhone en Swift y SwiftUI. La de Android, cuando toque, en
+  Kotlin. Las dos comparten el protocolo (`docs/PROTOCOLO.md`) y sus vectores de
+  prueba, no el código.
+- **Motivo:** en cualquier tecnología, lo que funciona con la pantalla bloqueada
+  (GPS, metros y BLE) tiene que ser código nativo de cada sistema (ver
+  [lo comprobado](#tecnología-lo-comprobado)). En Swift se usan todas las API de
+  Apple y el SDK de Ferrostar para Swift sin capas intermedias. Lo que se
+  duplicará en Android es pequeño, porque el guiado lo hace Ferrostar en los dos
+  sistemas. Si molesta, esa parte se puede pasar más adelante a Kotlin
+  Multiplatform.
 
 ### 2026-10-08 · Versión mínima de iOS: 17.0
 
@@ -102,7 +116,24 @@ final.
   colas y no tiene garantía). `macos-26` trae Xcode 26.6 con el SDK de iOS 26.5
   [F10]. La imagen se elige al crear el workflow.
 - En un repositorio público, cualquier usuario con sesión en GitHub puede
-  descargar los artefactos del workflow [F11].
+  descargar los artefactos del workflow [F11]. El `.ipa` se guarda solo 7 días.
+
+### 2026-10-08 · Fase 0: la app mínima
+
+- **Estructura:** `Core/` es un paquete Swift sin frameworks de Apple, con el
+  protocolo y sus pruebas. `App/` es la app SwiftUI. `project.yml` define el
+  proyecto para XcodeGen, que lo genera en CI.
+- ***Bundle ID* fijo:** `io.github.luispr99.lprgauge`. El nombre visible es «LPR
+  Gauge».
+- **Runner `macos-26` con Xcode 26.6 fijado** (SDK de iOS 26.5), no `xcode-27`.
+  Motivo: `xcode-27` está en vista previa, con posibles colas y sin garantía
+  [F10]. Que la app compilada con el SDK 26.5 funcione en iOS 27 es lo primero
+  que se prueba en el iPhone.
+- **Modo de lenguaje Swift 5** de momento. Sin compilador en el PC, cada error
+  cuesta una vuelta por CI, y el modo Swift 6 da más avisos de concurrencia con
+  Core Bluetooth. Se puede subir más adelante.
+- **Pruebas de `Core`:** se ejecutan en CI (macOS). En Windows no hay Swift
+  instalado; el workflow de Windows queda para más adelante.
 
 ## Rutas y flechas: lo comprobado
 
@@ -129,12 +160,10 @@ Comprobado el 2026-10-08:
   - El servidor público de FOSSGIS admite un uso razonable, como mucho una
     petición por segundo [F20]. Para un producto haría falta un servidor propio.
 
-## Pendiente de decidir
+## Tecnología: lo comprobado
 
-### Tecnología para iOS y Android
-
-Opciones: React Native, Flutter, Kotlin Multiplatform o dos apps nativas. En
-estudio. Comprobado el 2026-10-08:
+Opciones estudiadas: React Native, Flutter, Kotlin Multiplatform y dos apps
+nativas. Comprobado el 2026-10-08:
 
 - React Native permite llamar a las API de Apple con módulos nativos en Swift
   (Expo Modules API, licencia MIT) [F14].
