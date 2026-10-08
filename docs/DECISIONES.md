@@ -100,8 +100,11 @@ final.
   previo, la app se quedó en «Cola de envío llena» (`canSendWriteWithoutResponse`
   a `false`) sin llegar a enviar. Si se repite, la salida prevista es escribir
   igualmente: según Apple, el mensaje solo se puede perder, y se repite cada 2 s.
-- Pendiente: el cambio de carga al enchufar y desenchufar, y la reconexión con un
-  iPhone ya emparejado (camino de *Service Changed*).
+- **Reconexión (2026-10-08, según el autor):** funciona al cerrar la app,
+  reiniciar la placa y volver a abrirla. Sin confirmar qué versión del sketch
+  estaba cargada: el registro de serie que se adjuntó era el de la prueba
+  anterior.
+- Pendiente: el cambio de carga al enchufar y desenchufar.
 - **Monitor serie:** solo muestra algo si el puerto USB y la opción «USB CDC On
   Boot» casan (CH343 con Disabled; USB nativo con Enabled), como ya pasó en el
   cuadro.
