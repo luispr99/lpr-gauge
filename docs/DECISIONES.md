@@ -200,6 +200,47 @@ nativas. Comprobado el 2026-10-08:
 - **Ferrostar** (navegación) tiene SDK estables para Swift y Kotlin. Para React
   Native no hay paquetes publicados, y para Flutter no hay nada oficial [F27].
 
+## Altitud: lo comprobado
+
+Comprobado el 2026-10-08:
+
+- **Barómetro (altitud absoluta, `CMAltimeter`):**
+  - Disponible desde iOS 15 y solo en iPhone 12 o posterior; hay que comprobarlo
+    con `isAbsoluteAltitudeAvailable()`.
+  - Da metros sobre el nivel del mar y una incertidumbre a 1σ.
+  - Exige `NSMotionUsageDescription` y el permiso de Movimiento y forma física
+    [F28].
+  - Apple no documenta si sigue entregando datos con la app en segundo plano: hay
+    que probarlo.
+- **GPS (`CLLocation.altitude`):** metros sobre el nivel medio del mar (geoide
+  EGM2008). Solo es válido si `verticalAccuracy` es mayor que 0 [F29].
+- **Plan:** barómetro si está disponible y autorizado; si no, la altitud del GPS.
+  Se envía en metros, con su incertidumbre como precisión vertical.
+- **Riesgo para la moto:** `pausesLocationUpdatesAutomatically` vale `true` por
+  defecto. Con permiso «Cuando se use», una pausa corta la ubicación hasta volver
+  a abrir la app [F30]. El proveedor de ubicación de Ferrostar no la desactiva,
+  así que hará falta uno propio.
+
+## Maniobras: lo comprobado
+
+Comprobado el 2026-10-08 en la documentación y en el código de Valhalla y
+Ferrostar:
+
+- **Formato:** Ferrostar pide a Valhalla las rutas en formato OSRM [F31]. La app
+  recibe cada giro como un **tipo** (16 valores: giro, rotonda, bifurcación,
+  incorporación, salida, llegada…) y un **modificador** (8 valores: recto, ligero,
+  normal o cerrado a cada lado, y cambio de sentido). En rotondas recibe además el
+  número de salida y los grados que se recorren.
+- **Ángulo:** Ferrostar no da el ángulo de giro. Habría que calcularlo con la
+  geometría de la ruta.
+- **Altitud:** Ferrostar no transporta la altitud: la app la lee aparte.
+- **Distancia:** la que queda hasta el giro está en
+  `state.currentProgress.distanceToNextManeuver`, y el giro en
+  `state.currentVisualInstruction.primaryContent`.
+- **Pendiente de probar con una ruta real:** según el código, la instrucción del
+  paso actual ya describe el próximo giro, y el número de salida de la rotonda va
+  en el paso siguiente.
+
 ## Pendiente de probar
 
 - Que Sideloadly v0.70.1 instale desde Windows en iOS 27.0.1: no hay ningún
@@ -275,3 +316,17 @@ nativas. Comprobado el 2026-10-08:
 - [F26] Kotlin LSP: https://kotlinlang.org/docs/kotlin-lsp.html
 - [F27] Ferrostar, plataformas: https://stadiamaps.github.io/ferrostar/ ·
   https://github.com/stadiamaps/ferrostar/issues/735
+- [F28] Apple, Core Motion:
+  https://developer.apple.com/documentation/coremotion/cmaltimeter ·
+  https://developer.apple.com/documentation/coremotion/cmabsolutealtitudedata
+- [F29] Apple, altitud de Core Location:
+  https://developer.apple.com/documentation/corelocation/cllocation/altitude ·
+  https://developer.apple.com/documentation/corelocation/cllocation/verticalaccuracy
+- [F30] Apple:
+  https://developer.apple.com/documentation/corelocation/cllocationmanager/pauseslocationupdatesautomatically ·
+  Ferrostar, proveedor de ubicación:
+  https://github.com/stadiamaps/ferrostar/blob/main/apple/Sources/FerrostarCore/Location.swift
+- [F31] Ferrostar, modelo de maniobras y adaptador de Valhalla:
+  https://github.com/stadiamaps/ferrostar/blob/main/common/ferrostar/src/models.rs ·
+  https://github.com/stadiamaps/ferrostar/blob/main/common/ferrostar/src/routing_adapters/valhalla.rs ·
+  Valhalla, referencia de la API: https://valhalla.github.io/valhalla/api/route/api-reference/
