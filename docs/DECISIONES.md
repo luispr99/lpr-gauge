@@ -137,8 +137,11 @@ final.
 - **Primera compilación en CI, correcta** (2026-10-08, ejecución 37831961338 del
   workflow `iOS`). Usó Xcode 26.6 (17F113), Swift 6.3.3 y el SDK de iOS 26.5;
   pasaron las 3 pruebas de `Core`. El `.ipa` sin firmar lleva el *bundle ID*
-  fijo, `MinimumOSVersion` 17.0 y la versión 0.1.0. Falta el criterio de
-  aceptación de la fase 0: instalarla y abrirla en el iPhone con iOS 27.
+  fijo, `MinimumOSVersion` 17.0 y la versión 0.1.0.
+- **Fase 0 terminada (2026-10-08).** La app compilada en CI con el SDK de iOS 26.5
+  se instaló con Sideloadly y Apple ID secundario y se abre en el iPhone con iOS
+  27, según el autor. Hizo falta confiar en el desarrollador (Ajustes > General >
+  VPN y gestión de dispositivos) y activar el Modo desarrollador.
 
 ## Rutas y flechas: lo comprobado
 
@@ -243,8 +246,6 @@ Ferrostar:
 
 ## Pendiente de probar
 
-- Que Sideloadly v0.70.1 instale desde Windows en iOS 27.0.1: no hay ningún
-  informe publicado.
 - Que, tras volver a firmar, la app conserve los modos en segundo plano y siga
   recibiendo GPS y enviando por BLE con la pantalla bloqueada. Probar sesiones
   largas: hay informes de huecos de varios minutos sin posiciones en iOS 27 [F12].
