@@ -142,6 +142,29 @@ estudio. Comprobado el 2026-10-08:
   segundo plano en iOS: Headless JS es solo de Android [F15]. Con React Native, lo
   que tiene que funcionar con la pantalla bloqueada (GPS, cálculo de metros y BLE)
   iría en código nativo de cada sistema, y solo se compartiría la interfaz.
+- **Flutter:** también necesita una pieza nativa propia en cada sistema para el
+  BLE en segundo plano. Desde la 3.41 usa el ciclo de vida por escenas, y el
+  registro de plugins se aplaza hasta después del arranque de la app [F21]. La
+  librería BLE más usada, flutter_blue_plus, exige licencia de pago para uso
+  comercial y desde junio de 2026 envía datos de la app en cada build de Android
+  [F22]: queda descartada.
+- **Kotlin Multiplatform (KMP):**
+  - Un solo lenguaje, Kotlin, para iOS y Android. KMP y Compose Multiplatform son
+    estables en iOS [F23].
+  - Desde Kotlin se usan directamente las API de Apple expuestas a Objective-C,
+    como Core Bluetooth y Core Location [F24]. Así, la parte que debe funcionar
+    con la pantalla bloqueada se puede escribir una sola vez y compilar a código
+    nativo, sin depender de JavaScript ni de Dart en segundo plano.
+  - Las API solo de Swift no se pueden llamar desde Kotlin [F24]. Ferrostar es una
+    de ellas en iOS: se usaría desde Swift, detrás de una interfaz Kotlin.
+  - Cada versión de Kotlin va ligada a una de Xcode: Kotlin 2.4.x con Xcode 26.4
+    [F25]. Para Xcode 27 habrá que esperar a Kotlin 2.5 (previsto en diciembre de
+    2026).
+  - VS Code no sirve hoy para KMP: el servidor de lenguaje de Kotlin está en alfa
+    y no admite proyectos multiplataforma [F26]. Hace falta IntelliJ IDEA o
+    Android Studio.
+- **Ferrostar** (navegación) tiene SDK estables para Swift y Kotlin. Para React
+  Native no hay paquetes publicados, y para Flutter no hay nada oficial [F27].
 
 ## Pendiente de probar
 
@@ -204,3 +227,17 @@ estudio. Comprobado el 2026-10-08:
 - [F19] https://github.com/valhalla/valhalla · https://stadiamaps.github.io/ferrostar/
 - [F20] FOSSGIS, condiciones de uso de sus servidores:
   https://fossgis.de/arbeitsgruppen/osm-server/nutzungsbedingungen/
+- [F21] Flutter, ciclo de vida por escenas:
+  https://docs.flutter.dev/release/breaking-changes/uiscenedelegate
+- [F22] flutter_blue_plus, licencia y aviso de licencia en el build:
+  https://raw.githubusercontent.com/chipweinberger/flutter_blue_plus/master/LICENSE.md ·
+  https://github.com/chipweinberger/flutter_blue_plus/commit/70f061eb
+- [F23] Kotlin Multiplatform, estabilidad por plataforma:
+  https://kotlinlang.org/docs/multiplatform/supported-platforms.html
+- [F24] Kotlin/Native, interoperabilidad con Objective-C:
+  https://kotlinlang.org/docs/native-objc-interop.html
+- [F25] Kotlin Multiplatform, compatibilidad de versiones:
+  https://kotlinlang.org/docs/multiplatform/multiplatform-compatibility-guide.html
+- [F26] Kotlin LSP: https://kotlinlang.org/docs/kotlin-lsp.html
+- [F27] Ferrostar, plataformas: https://stadiamaps.github.io/ferrostar/ ·
+  https://github.com/stadiamaps/ferrostar/issues/735
