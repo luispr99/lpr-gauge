@@ -45,6 +45,13 @@ crashreports/
 *.aab
 build/
 DerivedData/
+Payload/
+.build/
+.swiftpm/
+
+# Lo genera XcodeGen en CI a partir de project.yml
+*.xcodeproj/
+App/Info.plist
 
 # -----------------------------------------------------------------------------
 # Sistema y editores

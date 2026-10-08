@@ -1,0 +1,12 @@
+{
+  "sourceLanguage" : "es",
+  "strings" : {
+    "Fase 0: la app arranca en el iPhone." : {
+      "comment" : "Pantalla de inicio de la fase 0."
+    },
+    "Versión %@ · protocolo v%lld" : {
+      "comment" : "Versión de la app y versión del protocolo BLE."
+    }
+  },
+  "version" : "1.0"
+}

@@ -1,0 +1,51 @@
+# Proyecto de Xcode para XcodeGen. El .xcodeproj se GENERA en CI
+# (xcodegen generate) y nunca se edita a mano ni se versiona.
+name: LPRGauge
+
+options:
+  bundleIdPrefix: io.github.luispr99
+  deploymentTarget:
+    iOS: "17.0"
+  developmentLanguage: es
+  createIntermediateGroups: true
+
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+
+packages:
+  Core:
+    path: Core
+
+targets:
+  LPRGauge:
+    type: application
+    platform: iOS
+    sources:
+      - App/Sources
+      - App/Resources
+    dependencies:
+      - package: Core
+        product: LPRCore
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: LPR Gauge
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSRequiresIPhoneOS: true
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+    settings:
+      base:
+        # Fijo desde el primer día: la cuenta gratuita solo admite 10 App IDs
+        # nuevos cada 7 días (docs/DECISIONES.md)
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.luispr99.lprgauge
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_EMIT_LOC_STRINGS: YES
+    scheme: {}
