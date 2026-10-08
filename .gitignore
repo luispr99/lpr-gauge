@@ -1,0 +1,58 @@
+# -----------------------------------------------------------------------------
+# Privacidad (ver docs/DECISIONES.md)
+# Los registros de ruta (posiciones con hora) son datos personales y el
+# repositorio es público. La app los exporta fuera del repositorio; esto es una
+# segunda barrera por si alguno acaba aquí por error.
+# -----------------------------------------------------------------------------
+*.gpx
+*.kml
+*.kmz
+*.geojson
+*.nmea
+*.csv
+
+# Los datos de prueba, con coordenadas inventadas, sí se versionan.
+!docs/vectores/**
+!**/datos-prueba/**
+
+# Salidas de idevicesyslog e informes de fallo: llevan datos de todo el teléfono.
+*.log
+*.ips
+*.crash
+syslog*.txt
+crashreports/
+
+# -----------------------------------------------------------------------------
+# Claves y firma: nunca en el repositorio.
+# -----------------------------------------------------------------------------
+*.p12
+*.pfx
+*.cer
+*.mobileprovision
+*.provisionprofile
+*.key
+*.pem
+*.jks
+*.keystore
+.env
+.env.*
+
+# -----------------------------------------------------------------------------
+# Compilación
+# -----------------------------------------------------------------------------
+*.ipa
+*.apk
+*.aab
+build/
+DerivedData/
+
+# -----------------------------------------------------------------------------
+# Sistema y editores
+# -----------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+.vscode/*
+!.vscode/extensions.json
+.idea/

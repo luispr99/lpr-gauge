@@ -1,0 +1,16 @@
+# Finales de línea LF en el repositorio y en la copia de trabajo: los scripts y
+# los ficheros de proyecto se usan también en los runners de macOS.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binarios
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.ttf binary
+*.otf binary
+*.zip binary
