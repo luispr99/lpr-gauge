@@ -29,7 +29,7 @@ struct ContentView: View {
                 }
 
                 Section("Batería del iPhone") {
-                    LabeledContent("Estado") { Text(enlace.bateria.estado.texto) }
+                    LabeledContent("Carga") { Text(enlace.bateria.estado.texto) }
                     LabeledContent("Nivel") {
                         if let nivel = enlace.bateria.nivel {
                             Text("\(Int(nivel)) %")

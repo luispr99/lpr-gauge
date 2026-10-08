@@ -58,6 +58,12 @@ final class EnlaceBLE: NSObject, ObservableObject {
     private var ignorarLatencia = true
     private var envioPendiente = false
     private var reintentosLectura = 0
+    /// Cada preparación (descubrir servicios → DEVICE_INFO → STATUS) lleva un
+    /// número; el vigilante solo actúa si sigue siendo la misma.
+    private var preparacion = 0
+    private var primerEnvioAnotado = false
+    private var colaLlenaAnotada = false
+    private var primerStatusAnotado = false
     private var inicioBusqueda: Date?
     private var pistaBusquedaDada = false
     private var mantenimiento: Timer?
@@ -207,6 +213,33 @@ final class EnlaceBLE: NSObject, ObservableObject {
         estado = .preparando
         reintentosLectura = 0
         anotar("Conectado. Buscando el servicio…")
+        vigilarPreparacion()
+        periferico.discoverServices([uuidServicio])
+    }
+
+    /// Si la preparación no termina (por ejemplo, porque un aviso de servicios
+    /// cambiados llega a mitad), corta la conexión para empezar de cero con un
+    /// enlace nuevo: perdido() vuelve a conectar.
+    private func vigilarPreparacion() {
+        preparacion += 1
+        let intento = preparacion
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(10))
+            guard let self, self.preparacion == intento, self.estado == .preparando,
+                  let periferico = self.periferico else { return }
+            self.anotar("La preparación no ha terminado en 10 s: se corta y se vuelve a conectar")
+            self.central?.cancelPeripheralConnection(periferico)
+        }
+    }
+
+    private func serviciosCambiados(_ periferico: CBPeripheral, invalidados: [CBUUID]) {
+        anotar("La placa avisa de servicios cambiados (\(invalidados.count) invalidados)")
+        // Solo hace falta repetir la preparación si afecta al servicio LPR
+        guard invalidados.contains(uuidServicio) || caracMovil == nil else { return }
+        anotar("Se vuelve a buscar el servicio LPR")
+        olvidarCaracteristicas()
+        estado = .preparando
+        vigilarPreparacion()
         periferico.discoverServices([uuidServicio])
     }
 
@@ -253,6 +286,9 @@ final class EnlaceBLE: NSObject, ObservableObject {
         mantenimiento = nil
         enviados.removeAll()
         envioPendiente = false
+        primerEnvioAnotado = false
+        colaLlenaAnotada = false
+        primerStatusAnotado = false
     }
 
     // MARK: - Servicio y características
@@ -319,6 +355,10 @@ final class EnlaceBLE: NSObject, ObservableObject {
             guard let bytes, let status = MensajeStatus.decodificar(bytes) else {
                 anotar("STATUS no válido: \(hex(bytes ?? []))")
                 return
+            }
+            if !primerStatusAnotado {
+                primerStatusAnotado = true
+                anotar("Primer STATUS de la placa: \(hex(bytes))")
             }
             if let eco = status.ecoMovil {
                 ultimoEco = eco
@@ -395,9 +435,14 @@ final class EnlaceBLE: NSObject, ObservableObject {
         guard periferico.canSendWriteWithoutResponse else {
             // Se manda en cuanto iOS avise de que hay hueco (peripheralIsReady)
             envioPendiente = true
+            if !colaLlenaAnotada {
+                colaLlenaAnotada = true
+                anotar("Cola de envío llena: se espera a que iOS tenga hueco")
+            }
             return
         }
         envioPendiente = false
+        colaLlenaAnotada = false
         let mensaje = MensajeMovil(secuencia: secuencia.siguiente(), estado: bateria.estado, nivel: bateria.nivel)
         let datos = Data(mensaje.codificar())
         guard datos.count <= periferico.maximumWriteValueLength(for: .withoutResponse) else {
@@ -407,6 +452,10 @@ final class EnlaceBLE: NSObject, ObservableObject {
         periferico.writeValue(datos, for: caracMovil, type: .withoutResponse)
         bateria = mensaje
         ultimaSecuencia = mensaje.secuencia
+        if !primerEnvioAnotado {
+            primerEnvioAnotado = true
+            anotar("MOVIL enviado (seq \(mensaje.secuencia): \(hex(mensaje.codificar()))); se repite cada 2 s")
+        }
         let ahora = Date()
         enviados[mensaje.secuencia] = ahora
         enviados = enviados.filter { ahora.timeIntervalSince($0.value) < 10 }
@@ -523,12 +572,10 @@ extension EnlaceBLE: CBPeripheralDelegate {
     }
 
     nonisolated func peripheral(_ peripheral: CBPeripheral, didModifyServices invalidatedServices: [CBService]) {
+        // Llega cuando la placa indica Service Changed (PROTOCOLO.md §11)
+        let invalidados = invalidatedServices.map { $0.uuid }
         MainActor.assumeIsolated {
-            // Llega cuando la placa indica Service Changed (PROTOCOLO.md §11)
-            self.anotar("La placa ha cambiado sus servicios: se vuelven a buscar")
-            self.olvidarCaracteristicas()
-            self.estado = .preparando
-            peripheral.discoverServices([self.uuidServicio])
+            self.serviciosCambiados(peripheral, invalidados: invalidados)
         }
     }
 
