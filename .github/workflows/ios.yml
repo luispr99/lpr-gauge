@@ -1,0 +1,78 @@
+# Pruebas de Core y compilación de la app de iPhone SIN FIRMAR. El .ipa queda
+# como artefacto; la firma la hace Sideloadly en Windows (docs/DECISIONES.md).
+# Solo runners estándar: son gratuitos en repositorios públicos; los -large y
+# -xlarge se cobran siempre.
+name: iOS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "App/**"
+      - "Core/**"
+      - "project.yml"
+      - ".github/workflows/ios.yml"
+  pull_request:
+    paths:
+      - "App/**"
+      - "Core/**"
+      - "project.yml"
+      - ".github/workflows/ios.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compilar:
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      # Xcode fijado: el de por defecto de la imagen puede cambiar sin aviso
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Versiones
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Pruebas de Core
+        run: swift test --package-path Core
+
+      - name: Instalar XcodeGen
+        run: brew install xcodegen
+
+      - name: Generar el proyecto de Xcode
+        run: xcodegen generate
+
+      - name: Compilar sin firma
+        run: |
+          xcodebuild build \
+            -project LPRGauge.xcodeproj \
+            -scheme LPRGauge \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: Empaquetar el .ipa
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/LPRGauge.app Payload/
+          zip -qry LPRGauge.ipa Payload
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: LPRGauge-ipa
+          path: LPRGauge.ipa
+          retention-days: 7
+          if-no-files-found: error
