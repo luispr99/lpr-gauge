@@ -1,11 +1,13 @@
 # Protocolo BLE móvil → cuadro
 
-> **Estado: borrador v0.1 (2026-10-08), sin validar.** Los puntos marcados
+> **Estado: borrador v0.2 (2026-10-08), sin validar.** Los puntos marcados
 > **[PENDIENTE]** faltan por completar. Mientras sea borrador, nada de lo que hay
-> aquí es definitivo y puede cambiar sin mantener compatibilidad.
+> aquí es definitivo y puede cambiar sin mantener compatibilidad. Los cambios de
+> cada versión están en la [sección 13](#13-cambios).
 
 Este documento es la única fuente de verdad del protocolo, también para el
-firmware del cuadro. El código sigue al documento, no al revés.
+firmware del cuadro. El código sigue al documento, no al revés. Los ejemplos de
+mensajes con sus bytes están en [vectores/mensajes.md](vectores/mensajes.md).
 
 ## 1. Papeles
 
@@ -25,12 +27,13 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
 | Nombre | UUID | Propiedades | Seguridad | Tamaño |
 |---|---|---|---|---|
 | Servicio `LPR` | `f4640001-813a-45b8-8ca8-f5f9e18c21d1` | — | — | — |
-| `DEVICE_INFO` | `f4640002-813a-45b8-8ca8-f5f9e18c21d1` | lectura | ninguna | ≥ 8 B |
+| `DEVICE_INFO` | `f4640002-813a-45b8-8ca8-f5f9e18c21d1` | lectura | cifrado | ≥ 8 B |
 | `NAV` | `f4640003-813a-45b8-8ca8-f5f9e18c21d1` | escritura sin respuesta | cifrado | ≤ 20 B |
 | `GPS` | `f4640004-813a-45b8-8ca8-f5f9e18c21d1` | escritura sin respuesta | cifrado | ≤ 20 B |
-| `STATUS` | `f4640005-813a-45b8-8ca8-f5f9e18c21d1` | notificación | cifrado | ≤ 20 B |
+| `STATUS` | `f4640005-813a-45b8-8ca8-f5f9e18c21d1` | lectura y notificación | cifrado | ≤ 20 B |
 | `NAV_TEXT` | `f4640006-813a-45b8-8ca8-f5f9e18c21d1` | reservado | — | — |
 | `CONFIG` | `f4640007-813a-45b8-8ca8-f5f9e18c21d1` | reservado | — | — |
+| `MOVIL` | `f4640008-813a-45b8-8ca8-f5f9e18c21d1` | escritura sin respuesta | cifrado | ≤ 20 B |
 
 - **Anuncio:** el UUID del servicio va en el **paquete principal**, no en la
   respuesta de escaneo. iOS, en segundo plano, solo encuentra periféricos
@@ -38,9 +41,11 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
   (`e136cd1e-…`), porque el paquete principal ya ocupa sus 31 bytes:
   flags 3 + potencia 3 + UUID 18 + nombre «CL500» 7.
 - **Cifrado:** LE Secure Connections *Just Works*, con el vínculo guardado. El
-  cuadro ya lo usa para ANCS, AMS y CTS en la misma conexión. Escribir en una
-  característica que exige cifrado hace que iOS pida el emparejamiento si aún no
-  lo hay.
+  cuadro ya lo usa para ANCS, AMS y CTS en la misma conexión.
+- **`DEVICE_INFO` también exige cifrado.** Es la primera petición con respuesta
+  de la app. Si el enlace no está cifrado, el dispositivo la rechaza, e iOS cifra
+  o empareja y la repite sola. Las escrituras sin respuesta no tienen respuesta,
+  así que un rechazo no avisaría a iOS de que tiene que cifrar.
 - **Mensajes de 20 bytes como máximo:** caben con el MTU mínimo (23). Aun así, la
   app consulta `maximumWriteValueLength(for:)` en tiempo de ejecución.
 
@@ -64,9 +69,13 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
 |---|---|---|---|
 | 0 | versión | u8 | Versión del protocolo del dispositivo: 1. |
 | 1 | tipo | u8 | 1 = cuadro de moto; 2 = firmware de referencia (solo serie). |
-| 2-3 | capacidades | u16 | Bit 0 `NAV`, bit 1 `GPS`, bit 2 `STATUS`, bit 3 `NAV_TEXT`, bit 4 `CONFIG`. |
+| 2-3 | capacidades | u16 | Bit 0 `NAV`, bit 1 `GPS`, bit 2 `STATUS`, bit 3 `NAV_TEXT`, bit 4 `CONFIG`, bit 5 `MOVIL`. |
 | 4 | frecuencia máxima | u8 | Mensajes por segundo y característica que acepta (0 = sin límite). |
 | 5-7 | versión de firmware | u8 × 3 | Mayor, menor, parche. |
+
+- Longitud mínima: 8 bytes.
+- La app solo escribe en las características cuya capacidad anuncia el
+  dispositivo.
 
 ## 5. `NAV` (escritura sin respuesta): siguiente maniobra
 
@@ -75,7 +84,7 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
 | 0 | versión | u8 | — | 1 |
 | 1 | secuencia | u8 | — | |
 | 2 | flags | u8 | — | Bit 0 ruta activa · bit 1 recalculando · bit 2 fuera de ruta · bit 3 llegada. |
-| 3 | maniobra | u8 | 0 | Código de flecha (sección 7). |
+| 3 | maniobra | u8 | 0 | Código de flecha (sección 8). |
 | 4 | modificador | u8 | 0 | En rotondas, número de salida (1-n). |
 | 5-6 | distancia | u16 | `0xFFFF` | Metros hasta la maniobra; satura en 65 534. |
 | 7-8 | ángulo | i16 | `0x7FFF` | Ángulo de giro en grados, de -180 a 180, positivo a la derecha. |
@@ -110,14 +119,29 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
   combinado con el GPS si el sistema lo ofrece; si no, GPS. El campo es el mismo
   en los dos casos. La precisión vertical es la que dé esa fuente.
 
-## 7. Códigos de maniobra
+## 7. `MOVIL` (escritura sin respuesta): estado del móvil
 
-**[PENDIENTE]** La tabla será un superconjunto de los 31 códigos (0-30) del
-protocolo *Komoot BLE Connect*, para reutilizar iconos y proyectos ESP32
-públicos. Se rellenará cuando esté verificada esa especificación. Los códigos
-propios empezarán en el 31.
+| Byte | Campo | Tipo | Desconocido | Descripción |
+|---|---|---|---|---|
+| 0 | versión | u8 | — | 1 |
+| 1 | secuencia | u8 | — | |
+| 2 | estado de la batería | u8 | 0 | 0 desconocido · 1 sin cargar · 2 cargando · 3 cargada (enchufada y llena). |
+| 3 | nivel de batería | u8 | 255 | Porcentaje, de 0 a 100. |
 
-## 8. `STATUS` (notificación)
+- Longitud mínima: 4 bytes.
+- Añadido en la v0.2 (2026-10-08), como primera prueba del enlace con la placa.
+- El cuadro ya lee el nivel de batería del iPhone por el servicio estándar
+  0x180F. Aquí el nivel va también para los dispositivos que no lo lean, como el
+  firmware de referencia.
+
+## 8. Códigos de maniobra
+
+**[PENDIENTE]** Ferrostar entrega cada maniobra como tipo y modificador al estilo
+OSRM (ver `DECISIONES.md`, «Maniobras: lo comprobado»). La tabla se definirá a
+partir de ellos. Queda por decidir si sigue siendo un superconjunto de los
+códigos 0-30 de *Komoot BLE Connect*, como se planteó al principio.
+
+## 9. `STATUS` (lectura y notificación)
 
 | Byte | Campo | Tipo | Descripción |
 |---|---|---|---|
@@ -125,7 +149,11 @@ propios empezarán en el 31.
 | 1 | eco `NAV` | u8 | Última secuencia de `NAV` recibida. |
 | 2 | eco `GPS` | u8 | Última secuencia de `GPS` recibida. |
 | 3 | flags | u8 | Bit 0 pide reenvío completo (por ejemplo, tras reiniciarse). |
+| 4 | eco `MOVIL` | u8 | Última secuencia de `MOVIL` recibida (añadido en la v0.2). |
 
+- Longitud mínima: 4 bytes. Un `STATUS` de 4 bytes viene de un dispositivo
+  anterior a la v0.2 y no trae eco de `MOVIL`.
+- Mientras no ha recibido nada de una característica, su eco vale 0.
 - El dispositivo notifica `STATUS` al suscribirse la app, después de cada
   escritura recibida y, como mínimo, cada 2 s.
 - **Latencia:** el eco permite a la app medir la latencia de ida y vuelta.
@@ -134,11 +162,11 @@ propios empezarán en el 31.
   Bluetooth la despierta la comunicación del accesorio. Las notificaciones
   periódicas sirven también para eso. **Sin probar.**
 
-## 9. Ritmo y caducidad
+## 10. Ritmo y caducidad
 
 - La app **no supone un ritmo fijo de GPS**: Apple no publica ni garantiza una
   frecuencia.
-- La app manda `NAV` y `GPS` en cada cambio y, como mínimo, cada 2 s
+- La app manda `NAV`, `GPS` y `MOVIL` en cada cambio y, como mínimo, cada 2 s
   (mantenimiento), aunque no cambie nada.
 - El cuadro da por **caducado** un dato si pasan más de **5 s** sin recibir su
   característica (decidido el 2026-10-08). Entonces muestra el mismo aviso que
@@ -147,10 +175,34 @@ propios empezarán en el 31.
 - **Al conectar,** la app lee `DEVICE_INFO`, se suscribe a `STATUS` y manda el
   estado completo sin esperar a ningún cambio.
 
-## 10. Pendiente
+## 11. Servicios que cambian: *Service Changed*
 
-- Tabla de maniobras (sección 7).
+- iOS guarda en caché los servicios GATT de los dispositivos con los que está
+  emparejado. Si el firmware cambia sus servicios (por ejemplo, al pasar del
+  sketch del cuadro al de referencia, o al añadir este servicio al cuadro), el
+  iPhone puede seguir viendo los antiguos.
+- El dispositivo debe **indicar *Service Changed*** (característica 0x2A05 del
+  servicio 0x1801) en cuanto el enlace con un móvil emparejado quede cifrado. Con
+  NimBLE se hace con `ble_svc_gatt_changed(0x0001, 0xFFFF)`. Sin probar.
+- La app vuelve a descubrir los servicios cuando iOS le avisa de que han cambiado
+  (`peripheral(_:didModifyServices:)`).
+- Si aun así no aparecen, se borra el emparejamiento en el iPhone (Ajustes >
+  Bluetooth > el dispositivo > Omitir este dispositivo). La librería BLE del core
+  3.3.8 acepta el emparejamiento nuevo y borra el vínculo antiguo
+  (`BLEServer.cpp`, evento `BLE_GAP_EVENT_REPEAT_PAIRING`).
+
+## 12. Pendiente
+
+- Tabla de maniobras (sección 8).
 - Parámetros de conexión que pida el cuadro. En el planteamiento inicial:
   intervalo de 30-60 ms, latencia 4 y *timeout* de 4 s, a medir con el eco de
   `STATUS`.
 - `NAV_TEXT` (nombre de calle) y `CONFIG` (unidades…), cuando se pidan.
+
+## 13. Cambios
+
+- **v0.2 (2026-10-08):** característica `MOVIL` (estado de la batería del móvil),
+  bit 5 de capacidades, eco de `MOVIL` en el byte 4 de `STATUS`, `STATUS` también
+  legible, `DEVICE_INFO` cifrada y sección 11 (*Service Changed*). La versión del
+  formato de los mensajes sigue siendo 1: todo se añade al final.
+- **v0.1 (2026-10-08):** primer borrador.
