@@ -134,6 +134,11 @@ final.
   Core Bluetooth. Se puede subir más adelante.
 - **Pruebas de `Core`:** se ejecutan en CI (macOS). En Windows no hay Swift
   instalado; el workflow de Windows queda para más adelante.
+- **Primera compilación en CI, correcta** (2026-10-08, ejecución 37831961338 del
+  workflow `iOS`). Usó Xcode 26.6 (17F113), Swift 6.3.3 y el SDK de iOS 26.5;
+  pasaron las 3 pruebas de `Core`. El `.ipa` sin firmar lleva el *bundle ID*
+  fijo, `MinimumOSVersion` 17.0 y la versión 0.1.0. Falta el criterio de
+  aceptación de la fase 0: instalarla y abrirla en el iPhone con iOS 27.
 
 ## Rutas y flechas: lo comprobado
 
