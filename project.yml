@@ -11,8 +11,8 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "0.1.0"
-    CURRENT_PROJECT_VERSION: "1"
+    MARKETING_VERSION: "0.2.0"
+    CURRENT_PROJECT_VERSION: "2"
     SWIFT_VERSION: "5.0"
 
 packages:
@@ -41,6 +41,9 @@ targets:
           UIApplicationSupportsMultipleScenes: false
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
+        NSBluetoothAlwaysUsageDescription: >-
+          LPR Gauge se conecta por Bluetooth al cuadro de la moto para enviarle la
+          navegación y el estado del iPhone.
     settings:
       base:
         # Fijo desde el primer día: la cuenta gratuita solo admite 10 App IDs
