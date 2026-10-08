@@ -40,6 +40,11 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
   buscando por UUID de servicio. En el cuadro, este UUID sustituye al de prueba
   (`e136cd1e-…`), porque el paquete principal ya ocupa sus 31 bytes:
   flags 3 + potencia 3 + UUID 18 + nombre «CL500» 7.
+- **Nombre:** la app no lo usa para encontrar el dispositivo, así que puede ir en
+  la respuesta de escaneo. Tras el UUID solo quedan 5 bytes para el nombre en el
+  paquete principal. Con un nombre más largo, como «LPR Gauge» en el firmware de
+  referencia, la librería BLE del core 3.3.8 lo pasa entero a la respuesta de
+  escaneo (`BLEAdvertising.cpp`).
 - **Cifrado:** LE Secure Connections *Just Works*, con el vínculo guardado. El
   cuadro ya lo usa para ANCS, AMS y CTS en la misma conexión.
 - **`DEVICE_INFO` también exige cifrado.** Es la primera petición con respuesta

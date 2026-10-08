@@ -67,6 +67,17 @@ final.
   como mucho una petición por segundo [F20]. Para un producto haría falta un
   servidor propio.
 
+### 2026-10-08 · Nombre: «LPR Gauge»
+
+- La app se llama «LPR Gauge», y el firmware de referencia se anuncia por
+  Bluetooth con ese mismo nombre (antes, «CL500», como el cuadro).
+- Se valoraron otros nombres más claros en español (LPR Manillar, LPR Driver…); el
+  autor se queda con «LPR Gauge».
+- El nombre visible se puede cambiar cuando se quiera sin tocar el *bundle ID*.
+  Si llega a ser un producto, habrá que comprobar las marcas registradas
+  (orientativo; debe revisarlo una persona).
+- Cambiar el nombre Bluetooth del cuadro corresponde al proyecto del cuadro.
+
 ### 2026-10-08 · Firmware de referencia
 
 - En la placa del propio cuadro (ESP32-S3), con un sketch aparte. Mientras está
