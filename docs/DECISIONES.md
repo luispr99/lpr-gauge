@@ -93,7 +93,15 @@ final.
   - acepta y quita la suscripción a `STATUS`;
   - descodifica `MOVIL` («seq 7: batería cargando, 85 %»);
   - marca el dato como caducado a los 5 s sin mensajes.
-- Falta probarlo con la app, enviando la batería real del iPhone.
+- **Probado con la app 0.2.1 (2026-10-08, según el autor):** la app conecta con
+  la placa, manda `MOVIL` cada 2 s y recibe el eco en `STATUS` con la misma
+  secuencia. Latencia de ida y vuelta: unos 50 ms.
+- **Sin explicar:** en un intento anterior, probablemente aún con el sketch
+  previo, la app se quedó en «Cola de envío llena» (`canSendWriteWithoutResponse`
+  a `false`) sin llegar a enviar. Si se repite, la salida prevista es escribir
+  igualmente: según Apple, el mensaje solo se puede perder, y se repite cada 2 s.
+- Pendiente: el cambio de carga al enchufar y desenchufar, y la reconexión con un
+  iPhone ya emparejado (camino de *Service Changed*).
 - **Monitor serie:** solo muestra algo si el puerto USB y la opción «USB CDC On
   Boot» casan (CH343 con Disabled; USB nativo con Enabled), como ya pasó en el
   cuadro.
