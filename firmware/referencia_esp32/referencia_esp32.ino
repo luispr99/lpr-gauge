@@ -25,6 +25,7 @@
 #include <BLEUtils.h>
 #include <BLESecurity.h>
 #include "host/ble_hs.h"
+#include "host/ble_store.h"
 #include "services/gatt/ble_svc_gatt.h"
 
 // No cabe en el paquete de anuncio principal (solo quedan 5 bytes tras el UUID
@@ -77,6 +78,7 @@ static uint32_t tUltimoMovil   = 0;
 static bool     caducado       = true;
 static uint32_t tStatus        = 0;
 static bool     seguridadPedida = false;
+static bool     habiaVinculo   = false;   // al conectar, el iPhone ya estaba emparejado
 static bool     reanuncioPendiente = false;
 static bool     anuncioRapido  = false;
 static uint32_t tAnuncio       = 0;
@@ -253,7 +255,19 @@ void loop() {
         anuncioRapido = false;
         seguridadPedida = false;
         flagsStatus |= 0x01;          // conexión nueva: que la app mande todo
-        Serial.printf("[REF] Conectado (handle %u, %s)\n", c, cifrado ? "cifrado" : "sin cifrar");
+        // ¿Ya había vínculo con este iPhone? Se mira al conectar, antes de que
+        // un emparejamiento nuevo lo cree (como en Movil_BLE.cpp del cuadro)
+        habiaVinculo = false;
+        struct ble_gap_conn_desc d;
+        if (c != BLE_HS_CONN_HANDLE_NONE && ble_gap_conn_find(c, &d) == 0) {
+            struct ble_store_key_sec k;
+            struct ble_store_value_sec v;
+            memset(&k, 0, sizeof(k));
+            k.peer_addr = d.peer_id_addr;
+            habiaVinculo = (ble_store_read_peer_sec(&k, &v) == 0);
+        }
+        Serial.printf("[REF] Conectado (handle %u, %s, %s)\n", c, cifrado ? "cifrado" : "sin cifrar",
+                      habiaVinculo ? "ya emparejado" : "sin emparejar todavía");
     }
     if (avisoDesconectado) {
         avisoDesconectado = false;
@@ -267,10 +281,18 @@ void loop() {
     if (avisoCifrado) {
         avisoCifrado = false;
         Serial.println("[REF] Enlace cifrado");
-        // Service Changed (§11): que el iPhone vuelva a leer los servicios por
-        // si recuerda los del sketch del cuadro
-        ble_svc_gatt_changed(0x0001, 0xFFFF);
-        Serial.println("[REF] Aviso de servicios cambiados enviado al iPhone");
+        if (habiaVinculo) {
+            // Service Changed (§11): un iPhone ya emparejado puede recordar los
+            // servicios de otro sketch (el del cuadro); que los vuelva a leer
+            ble_svc_gatt_changed(0x0001, 0xFFFF);
+            Serial.println("[REF] Aviso de servicios cambiados enviado al iPhone");
+        } else {
+            // Emparejamiento nuevo: el iPhone acaba de leer los servicios
+            // actuales. Avisar ahora solo le haría repetir la búsqueda a mitad
+            // de la preparación de la app (lo que pasó en la prueba del
+            // 2026-10-08)
+            Serial.println("[REF] Emparejamiento nuevo: no hace falta avisar de servicios cambiados");
+        }
     }
     if (avisoSuscripcion) {
         avisoSuscripcion = false;

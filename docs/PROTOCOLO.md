@@ -187,10 +187,15 @@ códigos 0-30 de *Komoot BLE Connect*, como se planteó al principio.
   sketch del cuadro al de referencia, o al añadir este servicio al cuadro), el
   iPhone puede seguir viendo los antiguos.
 - El dispositivo debe **indicar *Service Changed*** (característica 0x2A05 del
-  servicio 0x1801) en cuanto el enlace con un móvil emparejado quede cifrado. Con
-  NimBLE se hace con `ble_svc_gatt_changed(0x0001, 0xFFFF)`. Sin probar.
+  servicio 0x1801) cuando se cifra el enlace con un móvil **que ya estaba
+  emparejado** al conectar. Con NimBLE se hace con
+  `ble_svc_gatt_changed(0x0001, 0xFFFF)`.
+- **Con un emparejamiento nuevo no se indica:** el móvil acaba de leer los
+  servicios actuales. En la prueba del 2026-10-08 el aviso llegó a mitad de la
+  preparación de la app y la dejó sin terminar.
 - La app vuelve a descubrir los servicios cuando iOS le avisa de que han cambiado
-  (`peripheral(_:didModifyServices:)`).
+  el servicio LPR (`peripheral(_:didModifyServices:)`). Si la preparación no
+  termina en 10 s, corta la conexión y vuelve a conectar.
 - Si aun así no aparecen, se borra el emparejamiento en el iPhone (Ajustes >
   Bluetooth > el dispositivo > Omitir este dispositivo). La librería BLE del core
   3.3.8 acepta el emparejamiento nuevo y borra el vínculo antiguo
