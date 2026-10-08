@@ -1,8 +1,8 @@
 # Protocolo BLE móvil → cuadro
 
 > **Estado: borrador v0.1 (2026-10-08), sin validar.** Los puntos marcados
-> **[A DECIDIR]** esperan una decisión del autor. Mientras sea borrador, nada de
-> lo que hay aquí es definitivo y puede cambiar sin mantener compatibilidad.
+> **[PENDIENTE]** faltan por completar. Mientras sea borrador, nada de lo que hay
+> aquí es definitivo y puede cambiar sin mantener compatibilidad.
 
 Este documento es la única fuente de verdad del protocolo, también para el
 firmware del cuadro. El código sigue al documento, no al revés.
@@ -106,7 +106,9 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
 - **Velocidad y rumbo** no se muestran por ahora. Van porque la app ya los tiene
   y dejan sitio a ideas pendientes del cuadro, como el indicador de marcha. Sus
   unidades imitan la característica estándar *Location and Speed* (0x2A67).
-- **[A DECIDIR]** Origen de la altitud: GPS o barómetro del móvil.
+- **Origen de la altitud** (decidido el 2026-10-08): barómetro del móvil
+  combinado con el GPS si el sistema lo ofrece; si no, GPS. El campo es el mismo
+  en los dos casos. La precisión vertical es la que dé esa fuente.
 
 ## 7. Códigos de maniobra
 
@@ -138,9 +140,9 @@ propios empezarán en el 31.
   frecuencia.
 - La app manda `NAV` y `GPS` en cada cambio y, como mínimo, cada 2 s
   (mantenimiento), aunque no cambie nada.
-- El cuadro da por **caducado** un dato si pasa más de **T** segundos sin
-  recibir su característica. Entonces muestra el aviso de «sin GPS» o de «sin
-  datos». **[A DECIDIR]** el valor de T; propuesta: 5 s.
+- El cuadro da por **caducado** un dato si pasan más de **5 s** sin recibir su
+  característica (decidido el 2026-10-08). Entonces muestra el mismo aviso que
+  sin GPS.
 - **Edad del fix:** el GPS puede estar caducado aunque los mensajes lleguen.
 - **Al conectar,** la app lee `DEVICE_INFO`, se suscribe a `STATUS` y manda el
   estado completo sin esperar a ningún cambio.

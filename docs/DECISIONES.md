@@ -34,16 +34,24 @@ final.
 
 - La flecha del siguiente giro y los metros que faltan, actualizándose mientras se
   circula. Las flechas son imprescindibles.
-- La altitud.
-- Sin GPS, un aviso; nada más por ahora.
-- Supuesto, sin confirmar: si se corta la conexión Bluetooth, el cuadro muestra el
-  mismo aviso.
+- La altitud: del barómetro del móvil combinado con el GPS, si el sistema lo
+  ofrece; si no, del GPS. Pendiente de verificar la API en iOS y en Android.
+- Sin GPS, un aviso; nada más por ahora. Si se corta la conexión Bluetooth, el
+  mismo aviso (propuesto el 2026-10-08 y no corregido por el autor).
+- **Caducidad:** el cuadro muestra el aviso si pasan **5 s** sin recibir datos.
 
-### 2026-10-08 · De dónde salen las rutas
+### 2026-10-08 · Rutas y flechas: Valhalla con Ferrostar
 
-- iPhone: Apple Maps (MapKit), sin coste.
-- Android: Google, más adelante. Hay que verificar sus condiciones antes de
-  empezar (ver [Pendiente de decidir](#pendiente-de-decidir)).
+- **Decisión anterior, del mismo día:** Apple Maps en iPhone y Google en Android.
+- **Decisión:** Valhalla como motor de rutas y Ferrostar para el guiado, en
+  iPhone y en Android, con la condición de que sea gratis.
+- **Motivo:** las flechas son imprescindibles. Valhalla da el tipo de maniobra;
+  Apple Maps solo da texto, y Google exige cuenta de facturación (ver
+  [lo comprobado](#rutas-y-flechas-lo-comprobado)).
+- **Coste:** Valhalla (MIT) y Ferrostar (BSD-3) son software libre. Para la prueba
+  personal se usa el servidor público de FOSSGIS: gratuito, con uso razonable y
+  como mucho una petición por segundo [F20]. Para un producto haría falta un
+  servidor propio.
 
 ### 2026-10-08 · Firmware de referencia
 
@@ -78,6 +86,8 @@ final.
   reciben el error 0xe8008024 («provisioning profile is banned»). AltStore lo
   reconoció el 2026-09-21 y recomienda usar un Apple ID secundario; la causa no
   se conoce [F9].
+- **Apple ID:** se firma con un Apple ID secundario del autor, no con el principal
+  (2026-10-08).
 - **Cuenta de pago:** se decidirá después de la prueba de concepto. Nada de la
   prueba la necesita.
 
@@ -94,21 +104,7 @@ final.
 - En un repositorio público, cualquier usuario con sesión en GitHub puede
   descargar los artefactos del workflow [F11].
 
-## Pendiente de decidir
-
-### Tecnología para iOS y Android
-
-Opciones: React Native, Flutter, Kotlin Multiplatform o dos apps nativas. En
-estudio. Comprobado el 2026-10-08:
-
-- React Native permite llamar a las API de Apple con módulos nativos en Swift
-  (Expo Modules API, licencia MIT) [F14].
-- React Native no tiene ningún mecanismo oficial para ejecutar JavaScript en
-  segundo plano en iOS: Headless JS es solo de Android [F15]. Con React Native, lo
-  que tiene que funcionar con la pantalla bloqueada (GPS, cálculo de metros y BLE)
-  iría en código nativo de cada sistema, y solo se compartiría la interfaz.
-
-### De dónde salen las rutas y las flechas
+## Rutas y flechas: lo comprobado
 
 Comprobado el 2026-10-08:
 
@@ -133,10 +129,19 @@ Comprobado el 2026-10-08:
   - El servidor público de FOSSGIS admite un uso razonable, como mucho una
     petición por segundo [F20]. Para un producto haría falta un servidor propio.
 
-### Otros
+## Pendiente de decidir
 
-- **Apple ID para firmar:** el principal o uno secundario.
-- **Altitud:** del GPS o del barómetro del móvil.
+### Tecnología para iOS y Android
+
+Opciones: React Native, Flutter, Kotlin Multiplatform o dos apps nativas. En
+estudio. Comprobado el 2026-10-08:
+
+- React Native permite llamar a las API de Apple con módulos nativos en Swift
+  (Expo Modules API, licencia MIT) [F14].
+- React Native no tiene ningún mecanismo oficial para ejecutar JavaScript en
+  segundo plano en iOS: Headless JS es solo de Android [F15]. Con React Native, lo
+  que tiene que funcionar con la pantalla bloqueada (GPS, cálculo de metros y BLE)
+  iría en código nativo de cada sistema, y solo se compartiría la interfaz.
 
 ## Pendiente de probar
 
