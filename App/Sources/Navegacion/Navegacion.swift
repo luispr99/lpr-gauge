@@ -199,6 +199,8 @@ final class Navegacion: ObservableObject {
     /// `iniciarAlCalcular`, la ruta empieza sola en cuanto hay propuestas.
     private var ordenCuadro: UInt8?
     private var iniciarAlCalcular = false
+    /// La orden llegó con la app en segundo plano (prueba, 0.19.0).
+    private var ordenEnFondo = false
     /// Escala del tramo del cuadro (TRAZO, §7 ter): el nivel y la maniobra para
     /// la que se eligió; con otra maniobra se elige de nuevo.
     private var nivelEscala: Int?
@@ -293,7 +295,34 @@ final class Navegacion: ObservableObject {
         buscador.alFallar = { [weak self] _ in
             self?.sugerencias = []
         }
+        // El GPS no se enciende al abrir la app (desde la 0.19.0): solo con un
+        // destino, para calcular y guiar, y se apaga al acabar (encenderGPS)
+    }
+
+    // MARK: - GPS solo con ruta (0.19.0)
+
+    /// A petición del autor: el GPS solo funciona con una ruta en marcha o
+    /// calculándose; al terminarla o cancelarla se apaga hasta la siguiente.
+    private func encenderGPS() {
         ubicacion.startUpdating()
+    }
+
+    private func apagarGPS() {
+        guard !navegando && !preparando else { return }
+        ubicacion.apagar()
+    }
+
+    /// Una posición de hace 30 s como mucho; si no la hay, espera a la
+    /// siguiente hasta `segundos`. Nil si no llega.
+    private func posicionReciente(esperando segundos: Double = 10) async -> UserLocation? {
+        let limite = Date().addingTimeInterval(segundos)
+        while true {
+            if let ultima = ubicacion.lastLocation, Date().timeIntervalSince(ultima.timestamp) < 30 {
+                return ultima
+            }
+            if Date() >= limite || Task.isCancelled { return nil }
+            try? await Task.sleep(for: .milliseconds(250))
+        }
     }
 
     // MARK: - Búsqueda
@@ -355,20 +384,30 @@ final class Navegacion: ObservableObject {
 
     /// Orden del cuadro (RUTAS y STATUS, PROTOCOLO.md §7 quinquies): empezar
     /// una de las rutas que enseña, como al tocarla en «Rutas» y pulsar
-    /// «Iniciar», o cancelarla. Solo con la app en primer plano: iOS no deja
-    /// activar el GPS en segundo plano desde el segundo plano (guiadoEnFondo).
+    /// «Iniciar», o cancelarla. Con la app en segundo plano (prueba, 0.19.0),
+    /// se intenta arrancar el GPS con las APIs nuevas; si iOS no da posiciones
+    /// en 10 s, contesta «abre la app». Con la app cerrada a mano, iOS no la
+    /// despierta y la orden no llega.
     func ordenDelCuadro(_ orden: OrdenRuta, ruta: RutaGuardada?) {
         switch orden.codigo {
         case .empezar?:
-            guard UIApplication.shared.applicationState == .active else {
-                enlace?.ponerEstadoOrden(.abreLaApp, eco: orden.contador)
-                return
-            }
             guard !navegando, !preparando, let ruta else {
                 enlace?.ponerEstadoOrden(.noSePudo, eco: orden.contador)
                 return
             }
+            // Con la app en segundo plano (prueba, 0.19.0): se intenta arrancar
+            // el GPS desde aquí (ProveedorUbicacion.arrancarEnFondo) y se pide
+            // a iOS tiempo para calcular; si no llegan posiciones, «abre la app»
+            let enFondo = UIApplication.shared.applicationState != .active
+            if enFondo {
+                enlace?.anotarDesdeFuera("Orden del cuadro con la app en segundo plano: se intenta arrancar el GPS")
+                pedirTiempoEnFondo()
+            }
             cargar(ruta)
+            if enFondo {
+                ubicacion.arrancarEnFondo()
+            }
+            ordenEnFondo = enFondo
             ordenCuadro = orden.contador
             iniciarAlCalcular = true
             enlace?.ponerEstadoOrden(.calculando, eco: orden.contador)
@@ -386,14 +425,40 @@ final class Navegacion: ObservableObject {
     private func terminarOrden(_ estado: EstadoOrdenRuta) {
         if let ordenCuadro {
             enlace?.ponerEstadoOrden(estado, eco: ordenCuadro)
+            if ordenEnFondo {
+                enlace?.anotarDesdeFuera("Orden del cuadro en segundo plano: \(estado == .ninguna ? "hecha" : "no se pudo (\(estado.rawValue))")")
+            }
         }
         ordenCuadro = nil
+        ordenEnFondo = false
         iniciarAlCalcular = false
+        terminarTiempoEnFondo()
+    }
+
+    /// Tiempo extra que se pide a iOS mientras se atiende una orden con la app
+    /// en segundo plano (si el GPS arranca, ya no hace falta: la ubicación la
+    /// mantiene despierta).
+    private var tiempoEnFondo = UIBackgroundTaskIdentifier.invalid
+
+    private func pedirTiempoEnFondo() {
+        guard tiempoEnFondo == .invalid else { return }
+        tiempoEnFondo = UIApplication.shared.beginBackgroundTask(withName: "Orden del cuadro") { [weak self] in
+            MainActor.assumeIsolated {
+                self?.terminarTiempoEnFondo()
+            }
+        }
+    }
+
+    private func terminarTiempoEnFondo() {
+        guard tiempoEnFondo != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(tiempoEnFondo)
+        tiempoEnFondo = .invalid
     }
 
     func cancelarRuta() {
         rutaCargada = nil
         terminarOrden(.ninguna)
+        defer { apagarGPS() }
         tareaVariantes?.cancel()
         tareaVariantes = nil
         olvidarDetalles()
@@ -452,6 +517,7 @@ final class Navegacion: ObservableObject {
 
     /// `aviso`: lo que se muestra mientras se calcula (por qué se recalcula).
     private func pedirVariantes(hacia lugar: ResultadoBusqueda, aviso avisoInicial: String? = nil) {
+        encenderGPS()
         tareaVariantes?.cancel()
         tareaInicio?.cancel()
         preparando = false
@@ -484,10 +550,23 @@ final class Navegacion: ObservableObject {
         generacion esta: Int,
         aviso avisoInicial: String?
     ) async {
-        guard let origen = ubicacion.lastLocation else {
+        // El GPS se acaba de encender (encenderGPS): se espera a una posición
+        aviso = "Buscando la posición GPS…"
+        guard let origen = await posicionReciente() else {
+            guard generacion == esta else { return }
             aviso = "Todavía no hay posición GPS. Espera unos segundos y vuelve a elegir el destino."
-            terminarOrden(.noSePudo)
+            // Desde el cuadro con la app en segundo plano: iOS no ha dado el GPS
+            if ordenEnFondo {
+                enlace?.anotarDesdeFuera("Orden del cuadro con la app en segundo plano: sin posiciones GPS en 10 s")
+                terminarOrden(.abreLaApp)
+            } else {
+                terminarOrden(.noSePudo)
+            }
             return
+        }
+        guard generacion == esta else { return }
+        if ordenEnFondo {
+            enlace?.anotarDesdeFuera("Orden del cuadro con la app en segundo plano: GPS en marcha")
         }
         calculando = true
         defer {
@@ -863,10 +942,9 @@ final class Navegacion: ObservableObject {
         rumbo = nil
         puntoGiro = nil
         cancelarRuta()
-        // stopNavigation() también para la ubicación: se reanuda para la posición
-        // y la altitud, ya sin el segundo plano
-        ubicacion.guiadoEnFondo(false)
-        ubicacion.startUpdating()
+        // Ruta terminada: el GPS se apaga hasta la siguiente (0.19.0; antes se
+        // reanudaba para la posición y la altitud)
+        ubicacion.apagar()
     }
 
     /// Núcleo de Ferrostar para guiar. Al recalcular por desvío usa el mismo
@@ -980,8 +1058,9 @@ final class Navegacion: ObservableObject {
             resumenLlegada = cuentakilometros?.resumen(ahora: Date())
             // Ferrostar no para el GPS al llegar: sin esto seguiría en segundo
             // plano, con el iPhone bloqueado, hasta pulsar «Terminar» (lo vio la
-            // revisión de la 0.9.0). Quitarlo se puede también en segundo plano
-            ubicacion.guiadoEnFondo(false)
+            // revisión de la 0.9.0). Desde la 0.19.0, al llegar se apaga del
+            // todo: la ruta ha terminado (a petición del autor)
+            ubicacion.apagar()
         }
 
         let texto: String?

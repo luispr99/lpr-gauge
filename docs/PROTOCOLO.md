@@ -433,9 +433,10 @@ con el bit 12 de capacidades.
   - con la app en primer plano, carga la ruta como en su pestaña «Rutas» y la
     empieza en cuanto la tiene (estado 1 y, al empezar a guiar, 0; si no
     puede, 3);
-  - si no está en primer plano, estado 2: iOS no deja empezar a usar el GPS en
-    segundo plano con el permiso «Mientras se usa la app» (la app lo activa al
-    pulsar «Iniciar», en primer plano).
+  - si no está en primer plano, desde la app 0.19.0 intenta arrancar el GPS
+    con las APIs nuevas de iOS (prueba); si en 10 s no hay posiciones, estado
+    2 (abre la app). Con la app cerrada a mano, iOS no la despierta y la orden
+    no llega (el dispositivo la da por perdida).
 - Si en 5 s no llega un `RUTAS` con el eco de su orden, el dispositivo la da
   por perdida (supuesto).
 

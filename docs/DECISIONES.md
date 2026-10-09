@@ -1350,3 +1350,30 @@ Ferrostar:
 - Una ruta cargada desde «Rutas» e iniciada con otro tipo de ruta, peajes,
   autovías o margen se guarda como nueva (antes subía la misma). Sin cambios,
   sube la misma.
+
+### 2026-10-10 · GPS solo con ruta y prueba de empezar desde el cuadro en segundo plano (0.19.0)
+
+- **El autor:** que tocar una ruta en el cuadro funcione sin abrir la app
+  («que de alguna manera el movil despierte la app y se ponga ya con el
+  gps») y «que cuando termine una ruta, el gps deje de estar operativo hasta
+  que se ponga otra ruta».
+- **GPS solo con ruta:** la app ya no enciende el GPS al abrirse. Se enciende
+  al calcular rutas (con destino) y espera hasta 10 s a una posición de 30 s
+  o menos; se apaga al cancelar, al llegar y al terminar
+  (\`ProveedorUbicacion.apagar\`). El mapa de «Navegar» sigue enseñando la
+  posición con MapKit mientras está en pantalla (no es el GPS de la app).
+- **Desde el cuadro con la app en segundo plano (prueba):** al llegar la
+  orden, se pide tiempo a iOS (\`beginBackgroundTask\`), se carga la ruta y se
+  intenta arrancar el GPS con \`CLServiceSession\` (iOS 18) y
+  \`CLLocationUpdate.liveUpdates\` (iOS 17). Base: respuesta de un ingeniero de
+  Apple en los foros de desarrolladores, junio de 2025
+  (https://developer.apple.com/forums/thread/787607; no es documentación):
+  con las APIs nuevas se puede si la app ha estado en primer plano al menos
+  una vez; con \`startUpdatingLocation()\`, no. Si en 10 s no hay posiciones,
+  la orden contesta «abre la app». El registro de «Placa» apunta qué pasó.
+- **Restauración de estado de Bluetooth:** el gestor central lleva
+  identificador de restauración; si iOS cierra la app para liberar memoria,
+  la vuelve a abrir cuando la placa escribe. Según los foros, no si el usuario
+  la cierra a mano desde el selector de apps.
+- **Sin probar** en el iPhone: decide si se hace el flujo completo (recalcular
+  y confirmar en el cuadro).

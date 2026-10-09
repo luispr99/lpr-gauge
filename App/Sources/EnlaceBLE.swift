@@ -166,7 +166,17 @@ final class EnlaceBLE: NSObject, ObservableObject {
         NotificationCenter.default.addObserver(self, selector: #selector(bateriaCambiada),
                                                name: UIDevice.batteryLevelDidChangeNotification, object: nil)
         leerBateria()
-        central = CBCentralManager(delegate: self, queue: nil)
+        // Con restauración de estado (0.19.0): si iOS cierra la app para
+        // liberar memoria, la vuelve a abrir en segundo plano cuando la placa
+        // escribe o avisa (no si se cierra a mano desde el selector de apps)
+        central = CBCentralManager(delegate: self, queue: nil,
+                                   options: [CBCentralManagerOptionRestoreIdentifierKey: "lpr-gauge-central"])
+    }
+
+    /// Una línea en el registro de la pestaña «Placa» desde otra parte de la
+    /// app (la navegación, con las órdenes del cuadro).
+    func anotarDesdeFuera(_ texto: String) {
+        anotar(texto)
     }
 
     /// Manda ahora el estado de la batería, sin esperar al mantenimiento.
@@ -1208,6 +1218,20 @@ final class EnlaceBLE: NSObject, ObservableObject {
 // MARK: - CBCentralManagerDelegate
 
 extension EnlaceBLE: CBCentralManagerDelegate {
+    /// iOS ha vuelto a abrir la app por la placa (restauración de estado): se
+    /// queda con el periférico; al encenderse el Bluetooth, empezar() lo
+    /// encuentra conectado y lo prepara como siempre.
+    nonisolated func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
+        let perifericos = dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral] ?? []
+        MainActor.assumeIsolated {
+            if let restaurado = perifericos.first {
+                self.periferico = restaurado
+                restaurado.delegate = self
+                self.anotar("iOS ha vuelto a abrir la app por la placa (restauración de Bluetooth)")
+            }
+        }
+    }
+
     nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) {
         let estadoCentral = central.state
         MainActor.assumeIsolated {

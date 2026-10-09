@@ -74,11 +74,64 @@ final class ProveedorUbicacion: NSObject, LocationProviding, CLLocationManagerDe
 
     // MARK: - CLLocationManagerDelegate
 
-    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+    // MARK: - Desde el cuadro, con la app en segundo plano (prueba, 0.19.0)
+
+    /// Sesión de servicio (iOS 18) y actualizaciones en vivo (iOS 17) para
+    /// intentar arrancar el GPS con la app en segundo plano, cuando la despierta
+    /// una orden del cuadro. Según un ingeniero de Apple en los foros (junio de
+    /// 2025, no es documentación), es lo que lo permite si la app ha estado en
+    /// primer plano al menos una vez; con startUpdatingLocation(), no. Sin
+    /// probar: si no llegan posiciones, la orden contesta «abre la app».
+    private var sesionServicio: AnyObject?
+    private var tareaEnVivo: Task<Void, Never>?
+    private(set) var enVivo = false
+
+    func arrancarEnFondo() {
+        let modos = Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String] ?? []
+        if modos.contains("location") {
+            gestor.allowsBackgroundLocationUpdates = true
+            gestor.showsBackgroundLocationIndicator = true
+        }
+        if #available(iOS 18.0, *), sesionServicio == nil {
+            sesionServicio = CLServiceSession(authorization: .whenInUse)
+        }
+        gestor.startUpdatingLocation()
+        guard tareaEnVivo == nil else { return }
+        enVivo = true
+        tareaEnVivo = Task { [weak self] in
+            do {
+                for try await actualizacion in CLLocationUpdate.liveUpdates(.automotiveNavigation) {
+                    if Task.isCancelled { break }
+                    guard let posicion = actualizacion.location else { continue }
+                    await MainActor.run { self?.recibir([posicion]) }
+                }
+            } catch {
+                // Sin posiciones: la orden se contesta por el tiempo de espera
+            }
+        }
+    }
+
+    /// GPS apagado del todo (a petición del autor: al terminar una ruta, hasta
+    /// que se ponga otra): las actualizaciones, las sesiones y el segundo plano.
+    func apagar() {
+        tareaEnVivo?.cancel()
+        tareaEnVivo = nil
+        enVivo = false
+        sesionServicio = nil
+        guiadoEnFondo(false)
+        gestor.allowsBackgroundLocationUpdates = false
+        gestor.stopUpdatingLocation()
+    }
+
+    private func recibir(_ locations: [CLLocation]) {
         guard let ultima = locations.last else { return }
         lastLocation = ultima.userLocation
         alCambiar?(ultima)
         delegate?.locationManager(self, didUpdateLocations: locations.map { $0.userLocation })
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        recibir(locations)
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
