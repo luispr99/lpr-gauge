@@ -80,16 +80,55 @@ final.
   otro servidor encaja con el uso personal del Xcode and Apple SDKs Agreement.
   Para un producto lo tendría que revisar una persona (DPLA, anexo 6 [F17]).
 - **Mapa en la pantalla de búsqueda,** con la posición. Al elegir un destino se
-  previsualizan **tres variantes** antes de empezar, todas sin peajes:
-  - **Más rápida:** opciones de moto por defecto.
-  - **Por secundarias:** `use_highways = 0` y `use_trails = 0,5`. Valhalla no
-    mide las curvas; según su documentación, `use_trails` hacia 1 evita las
-    carreteras principales y va por secundarias [F33]. Es la aproximación a «con
-    más curvas» que pidió el autor.
-  - **Más corta:** `shortest = true` [F33].
-  - Se piden con 1,1 s de separación, por el límite de FOSSGIS, y las que salen
-    iguales se muestran una sola vez. Al recalcular por desvío se usan las
-    opciones de la variante elegida.
+  previsualizan las rutas antes de empezar.
+- **Sustituido el mismo día** (ver la decisión siguiente): las tres variantes
+  «Más rápida», «Por secundarias» y «Más corta», todas sin peajes, pasan a ser
+  «la más rápida» y «la más divertida», con botones de preferencias.
+
+### 2026-10-09 · Preferencias de ruta: «la más rápida» y «la más divertida»
+
+- **Petición del autor:** botones «evitar peajes», «evitar autopistas» y «solo
+  asfalto», y solo dos propuestas: «la más rápida», por tiempo de llegada, y «la
+  más divertida», por número de curvas sin pasarse mucho de tiempo.
+- **Botones,** que se guardan entre usos. Al cambiarlos con un destino elegido se
+  vuelven a pedir las rutas. Opciones de la moto en Valhalla [F33]:
+  - Evitar peajes (activado por defecto, como antes): `use_tolls = 0`.
+  - Evitar autopistas: `use_highways = 0`.
+  - Solo asfalto: `exclude_unpaved = true` (sin tramos sin asfaltar salvo al
+    principio o al final) y `use_trails = 0` (evita pistas y firmes malos).
+- **Son preferencias, no prohibiciones.** Según la documentación, `use_tolls` y
+  `use_highways` a 0 no garantizan evitarlos si no hay otro camino. Las
+  exclusiones estrictas (`exclude_tolls`, `exclude_highways`) son experimentales
+  y el servidor las ignora si no tiene activado `allow_hard_exclusions` [F33];
+  no se ha comprobado si el de FOSSGIS lo tiene, así que no se usan.
+- **Candidatas:** dos peticiones a Valhalla, separadas 1,1 s por el límite de
+  FOSSGIS [F20], cada una con `alternates = 2` (hasta tres rutas por petición;
+  Ferrostar devuelve todas las de la respuesta [F34]):
+  - la normal de la moto, con las preferencias;
+  - otra que además evita autovías (`use_highways = 0`) y prefiere secundarias
+    (`use_trails = 0,5`; con «solo asfalto» se queda en 0, porque hacia 1 también
+    admite pistas) [F33].
+- **Elección:**
+  - La más rápida: la candidata que menos tarda (suma de la duración de sus
+    pasos, según Valhalla).
+  - La más divertida: la de más curvas entre las que no tardan más de un
+    **25 %** sobre la más rápida; a igualdad, la de más grados por km y luego la
+    más rápida. El 25 % es un supuesto, pendiente de ajustar con rutas reales
+    (`Curvas.margenTiempo`, en LPRCore). Si sale la misma que la más rápida, se
+    muestra una sola, con una nota.
+- **Curvas:** Valhalla no las mide; las cuenta la app sobre el trazado
+  (LPRCore, `Curvas.swift`, con pruebas en CI sobre geometrías inventadas):
+  - cada paso de la ruta por separado, para que los giros en los cruces no
+    cuenten; se saltan las rotondas (pasos de menos de 300 m con número de
+    salida);
+  - el trazado se remuestrea cada 25 m; un cambio de rumbo de menos de 4° por
+    tramo se toma como recta o ruido, y una curva es una racha de giros en el
+    mismo sentido que suma al menos 30°.
+  - Los umbrales son supuestos razonables, no salen de ninguna fuente; están
+    pendientes de comprobar con rutas reales.
+- **Al recalcular por desvío** se usan las opciones de la petición de la que salió
+  la ruta elegida, sin alternativas. La ruta nueva puede no ser la misma
+  alternativa.
 
 ### 2026-10-09 · Navegación: servidores, buscador y Ferrostar
 
@@ -427,3 +466,7 @@ Ferrostar:
 - [F33] Valhalla, opciones de coste de la moto (rama master, consultada el
   2026-10-09):
   https://github.com/valhalla/valhalla/blob/master/docs/docs/api/route/api-reference.md
+- [F34] Ferrostar 0.57.0, lectura de la respuesta (todas las rutas) y petición a
+  Valhalla (consultadas el 2026-10-09):
+  https://github.com/stadiamaps/ferrostar/blob/0.57.0/common/ferrostar/src/routing_adapters/osrm/mod.rs ·
+  https://github.com/stadiamaps/ferrostar/blob/0.57.0/common/ferrostar/src/routing_adapters/valhalla.rs
