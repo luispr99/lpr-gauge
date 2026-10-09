@@ -2,12 +2,12 @@ import LPRCore
 import SwiftUI
 
 /// Las rutas hechas (a petición del autor, 2026-10-10). Arriba, los tres
-/// accesos directos, que son los que salen en el cuadro sin ruta (los huecos
-/// libres, con las más recientes); debajo, todas, de la más reciente a la más
-/// antigua. Al tocar una, `abrir` la carga en «Navegar» con el mismo destino,
-/// tipo de ruta y preferencias (Navegacion.cargar): solo falta pulsar
-/// «Iniciar». Deslizando: a la derecha, acceso directo; a la izquierda, borrar
-/// (o quitar el acceso directo).
+/// accesos directos, que solo se configuran a mano con el botón de cada
+/// ruta; son los que salen en el cuadro sin ruta y, sin ninguno, el cuadro
+/// enseña las más recientes (sin añadirlas aquí). Debajo, todas, de la más
+/// reciente a la más antigua. Al tocar una, `abrir` la carga en «Navegar» con
+/// el mismo destino, tipo de ruta y preferencias (Navegacion.cargar): solo
+/// falta pulsar «Iniciar». Deslizando a la izquierda en «Recientes», se borra.
 struct RutasView: View {
     @ObservedObject var historial: HistorialRutas
     @ObservedObject var navegacion: Navegacion
@@ -16,33 +16,13 @@ struct RutasView: View {
     /// Mientras se guía (o se prepara el guiado) no se puede cargar otra.
     private var ocupado: Bool { navegacion.navegando || navegacion.preparando }
 
-    /// Lo que sale en cada hueco: el acceso directo o, si está libre, la
-    /// reciente que lo llena (nil si no hay ninguna).
-    private var enHuecos: [(ruta: RutaGuardada?, fijada: Bool)] {
-        var recientes = historial.paraElCuadro.filter { !historial.esAcceso($0) }
-        return (0..<RutasGuardadas.huecos).map { hueco in
-            if let fijada = historial.ruta(enHueco: hueco) {
-                return (fijada, true)
-            }
-            return (recientes.isEmpty ? nil : recientes.removeFirst(), false)
-        }
-    }
+    private var ningunAcceso: Bool { historial.accesos.allSatisfy { $0 == nil } }
 
     var body: some View {
         NavigationStack {
-            Group {
-                if historial.rutas.isEmpty {
-                    ContentUnavailableView(
-                        "Sin rutas todavía",
-                        systemImage: "clock.arrow.circlepath",
-                        description: Text("Cada ruta se guarda aquí al pulsar «Iniciar», para volver a cargarla con un toque.")
-                    )
-                } else {
-                    List {
-                        accesosDirectos
-                        recientes
-                    }
-                }
+            List {
+                accesosDirectos
+                recientes
             }
             .navigationTitle("Rutas")
         }
@@ -50,53 +30,40 @@ struct RutasView: View {
 
     private var accesosDirectos: some View {
         Section {
-            ForEach(Array(enHuecos.enumerated()), id: \.offset) { hueco, contenido in
-                if let ruta = contenido.ruta {
-                    Button {
-                        abrir(ruta)
-                    } label: {
-                        FilaRuta(ruta: ruta, fijada: contenido.fijada, reciente: !contenido.fijada)
-                    }
-                    .disabled(ocupado)
-                    .swipeActions(edge: .trailing) {
-                        if contenido.fijada {
-                            Button {
-                                historial.quitar(hueco: hueco)
-                            } label: {
-                                Label("Quitar", systemImage: "pin.slash")
-                            }
-                            .tint(.orange)
-                        }
+            ForEach(0..<RutasGuardadas.huecos, id: \.self) { hueco in
+                if let ruta = historial.ruta(enHueco: hueco) {
+                    fila(ruta) {
+                        BotonAcceso(estilo: .quitar) { historial.quitar(hueco: hueco) }
                     }
                 } else {
-                    Label("Hueco libre", systemImage: "square.dashed")
+                    Label("Hueco libre", systemImage: "circle.dashed")
                         .foregroundStyle(.secondary)
                 }
             }
         } header: {
             Text("Accesos directos")
         } footer: {
-            Text("Son las tres que salen en la pantalla del cuadro cuando no hay ruta. Los huecos sin acceso directo se llenan con las rutas más recientes. Para añadir una, desliza a la derecha en la lista de abajo; para quitarla, a la izquierda aquí.")
+            // Dos Text con literal: así son LocalizedStringKey (negrita e icono)
+            if ningunAcceso {
+                Text("**Sin accesos directos: el cuadro enseña las tres rutas más recientes.** Son las rutas que salen en la pantalla del cuadro cuando no hay ruta; los huecos libres se llenan allí con las más recientes, pero no se añaden aquí. Pulsa \(Image(systemName: "pin.fill")) en una ruta para fijarla.")
+            } else {
+                Text("Son las rutas que salen en la pantalla del cuadro cuando no hay ruta. Los huecos libres se llenan allí con las más recientes, pero no se añaden aquí. Pulsa \(Image(systemName: "pin.fill")) en una ruta para fijarla.")
+            }
         }
     }
 
     private var recientes: some View {
         Section {
+            if historial.rutas.isEmpty {
+                Text("Sin rutas todavía: cada ruta se guarda aquí al pulsar «Iniciar».")
+                    .foregroundStyle(.secondary)
+            }
             ForEach(historial.rutas) { ruta in
-                Button {
-                    abrir(ruta)
-                } label: {
-                    FilaRuta(ruta: ruta, fijada: historial.esAcceso(ruta), reciente: false)
-                }
-                .disabled(ocupado)
-                .swipeActions(edge: .leading) {
-                    if !historial.esAcceso(ruta) && historial.hayHuecoLibre {
-                        Button {
-                            historial.fijar(ruta)
-                        } label: {
-                            Label("Acceso directo", systemImage: "pin")
-                        }
-                        .tint(.blue)
+                fila(ruta, fijada: historial.esAcceso(ruta)) {
+                    if let hueco = historial.accesos.firstIndex(of: ruta.id) {
+                        BotonAcceso(estilo: .quitar) { historial.quitar(hueco: hueco) }
+                    } else {
+                        BotonAcceso(estilo: historial.hayHuecoLibre ? .fijar : .lleno) { historial.fijar(ruta) }
                     }
                 }
             }
@@ -106,19 +73,56 @@ struct RutasView: View {
         } footer: {
             Text(ocupado
                  ? "Termina la ruta en curso para cargar otra."
-                 : "Toca una para cargarla en «Navegar» con el mismo tipo de ruta y las mismas preferencias: solo faltará pulsar «Iniciar». Las rutas se calculan desde donde estés. Desliza a la izquierda para borrar.")
+                 : "Toca una para cargarla en «Navegar» con el mismo tipo de ruta y las mismas preferencias: solo faltará pulsar «Iniciar». Si cambias algo antes de iniciarla, se guarda como ruta nueva. Las rutas se calculan desde donde estés. Desliza a la izquierda para borrar.")
         }
+    }
+
+    /// La tarjeta (al tocarla, se carga) y su botón a la derecha. Los dos con
+    /// estilo sin borde: si no, en una lista el toque en el botón cargaría
+    /// también la ruta
+    private func fila<Boton: View>(_ ruta: RutaGuardada, fijada: Bool = false,
+                                   @ViewBuilder boton: () -> Boton) -> some View {
+        HStack(spacing: 8) {
+            Button {
+                abrir(ruta)
+            } label: {
+                FilaRuta(ruta: ruta, fijada: fijada)
+            }
+            .buttonStyle(.borderless)
+            .disabled(ocupado)
+            boton()
+        }
+    }
+}
+
+/// El botón al lado de cada ruta: fijarla como acceso directo, quitarla, o
+/// gris si los tres huecos están ocupados.
+private struct BotonAcceso: View {
+    enum Estilo { case fijar, quitar, lleno }
+    let estilo: Estilo
+    let accion: () -> Void
+
+    var body: some View {
+        Button(action: accion) {
+            Image(systemName: estilo == .quitar ? "minus" : "pin.fill")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(estilo == .quitar ? Color.red : estilo == .fijar ? Color.blue : Color.gray)
+                .frame(width: 34, height: 34)
+                .background((estilo == .quitar ? Color.red : estilo == .fijar ? Color.blue : Color.gray).opacity(0.12),
+                            in: Circle())
+        }
+        .buttonStyle(.borderless)
+        .disabled(estilo == .lleno)
+        .accessibilityLabel(estilo == .quitar ? "Quitar de accesos directos" : "Fijar como acceso directo")
     }
 }
 
 /// Una ruta de la lista: el destino, el tipo de ruta y lo que medía la ruta
 /// propuesta la última vez que se inició, con el peaje y la autopista como en
-/// las tarjetas de «Navegar». `fijada`: acceso directo; `reciente`: llena un
-/// hueco libre de los accesos directos.
+/// las tarjetas de «Navegar». `fijada`: acceso directo.
 struct FilaRuta: View {
     let ruta: RutaGuardada
     var fijada = false
-    var reciente = false
 
     private var tipo: TipoVariante { TipoVariante(rawValue: ruta.tipo) ?? .rapida }
 
@@ -132,11 +136,7 @@ struct FilaRuta: View {
 
     private var cuando: String {
         let fecha = ruta.fecha.formatted(.relative(presentation: .named))
-        var texto = ruta.veces > 1 ? "\(fecha) · \(ruta.veces) veces" : fecha
-        if reciente {
-            texto += " · la más reciente"
-        }
-        return texto
+        return ruta.veces > 1 ? "\(fecha) · \(ruta.veces) veces" : fecha
     }
 
     var body: some View {

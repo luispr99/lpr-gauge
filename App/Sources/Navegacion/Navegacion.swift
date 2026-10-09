@@ -189,9 +189,11 @@ final class Navegacion: ObservableObject {
     /// Las rutas hechas (pestaña «Rutas»): cada ruta se guarda ahí al pulsar
     /// «Iniciar», también con el simulador (a petición del autor).
     weak var historial: HistorialRutas?
-    /// La entrada de «Rutas» cargada (cargar): al iniciar, esa misma sube
-    /// arriba en vez de añadir otra. Se olvida al elegir otro destino.
-    private var rutaCargada: UUID?
+    /// La entrada de «Rutas» cargada (cargar): al iniciarla sin cambiar nada
+    /// (tipo de ruta, peajes, autovías y margen), esa misma sube arriba; si se
+    /// cambia algo, es una ruta nueva (a petición del autor). Se olvida al
+    /// elegir otro destino.
+    private var rutaCargada: RutaGuardada?
     /// La orden de ruta del cuadro en curso (su contador, v0.13): se le
     /// contesta por el enlace al empezar, al no poder o al cancelarla. Con
     /// `iniciarAlCalcular`, la ruta empieza sola en cuanto hay propuestas.
@@ -335,7 +337,7 @@ final class Navegacion: ObservableObject {
             return
         }
         cancelarRuta()
-        rutaCargada = guardada.id
+        rutaCargada = guardada
         // Sin destino, cambiarlas no pide rutas (preferenciaCambiada)
         if evitarPeajes != guardada.evitarPeajes { evitarPeajes = guardada.evitarPeajes }
         if evitarAutopistas != guardada.evitarAutopistas { evitarAutopistas = guardada.evitarAutopistas }
@@ -672,15 +674,20 @@ final class Navegacion: ObservableObject {
 
     /// A la pestaña «Rutas», con lo necesario para cargarla otra vez, al
     /// pulsar «Iniciar» (aunque luego no llegue a empezar). Si se cargó desde
-    /// la lista, la misma entrada sube arriba (rutaCargada).
+    /// la lista y no se ha cambiado nada, la misma entrada sube arriba
+    /// (rutaCargada); si se ha cambiado algo, va como nueva.
     private func guardarRuta(_ variante: VarianteRuta) {
         guard let destino else { return }
         let tipo = variante.tipos.contains(elegida) ? elegida : variante.tipo
         // Peaje y autopista como en la tarjeta: tramo a tramo si ya han
         // llegado; si no, los de las maniobras (un máximo)
         let detalle = detalles[variante.indice]
+        let igual = rutaCargada.map {
+            $0.tipo == tipo.rawValue && $0.evitarPeajes == evitarPeajes && $0.evitarAutopistas == evitarAutopistas
+                && abs($0.margen - margenExtra) < 0.001
+        } ?? false
         historial?.guardar(RutaGuardada(
-            id: rutaCargada ?? UUID(),
+            id: igual ? rutaCargada?.id ?? UUID() : UUID(),
             nombre: destino.nombre, descripcion: destino.descripcion,
             latitud: destino.latitud, longitud: destino.longitud, tipo: tipo.rawValue,
             evitarPeajes: evitarPeajes, evitarAutopistas: evitarAutopistas, margen: margenExtra,

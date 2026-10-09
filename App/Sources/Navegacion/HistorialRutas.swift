@@ -4,7 +4,8 @@ import SwiftUI
 
 /// Las rutas hechas de la pestaña «Rutas» (LPRCore, RutasGuardadas.swift), de
 /// la más reciente a la más antigua, y los tres accesos directos que salen en
-/// el cuadro (desde la 0.18.0). Se guardan en el propio iPhone (UserDefaults):
+/// el cuadro (desde la 0.18.0; solo los que fija el usuario: los huecos
+/// libres se llenan en el cuadro con las más recientes, no aquí). Se guardan en el propio iPhone (UserDefaults):
 /// no salen de él ni van a ningún servidor; al cuadro solo van las tres que
 /// enseña (RUTAS, PROTOCOLO.md §7 quinquies).
 @MainActor

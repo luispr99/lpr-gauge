@@ -1332,3 +1332,21 @@ Ferrostar:
 - **Sin probar:** sin compilar en local; las pruebas de `Core` corren en el
   CI. La pestaña, la orden y el inicio automático no tienen prueba automática
   ni están probados en el iPhone ni con el cuadro.
+
+### 2026-10-10 · «Rutas»: accesos directos a mano y ruta nueva si cambia (0.18.1)
+
+- **El autor:** «Los accesos directos los tienes que configurar desde la app.
+  Si no hay nada configurado se cogen los 3 más recientes pero no se agregan
+  automaticamente en esa lista, eso lo hace el usuario con un boton al lado
+  de la tarjeta» (con vista previa antes de hacerlo); y «cuando elijas una
+  ruta y cambies los parametros se considere una ruta nueva».
+- La sección «Accesos directos» enseña solo los fijados; los huecos libres,
+  «Hueco libre» (en el cuadro se siguen llenando con las más recientes, sin
+  añadirlas a la lista). Al lado de cada ruta, un botón: fijar (en el primer
+  hueco libre), quitar, o gris con los tres ocupados. Ya no se fija ni se
+  quita deslizando; deslizar a la izquierda en «Recientes» sigue borrando.
+  La lista sale siempre, también sin rutas (en la 0.18.0, sin rutas solo se
+  veía el aviso vacío).
+- Una ruta cargada desde «Rutas» e iniciada con otro tipo de ruta, peajes,
+  autovías o margen se guarda como nueva (antes subía la misma). Sin cambios,
+  sube la misma.
