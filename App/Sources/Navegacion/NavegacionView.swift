@@ -118,85 +118,121 @@ struct NavegacionView: View {
     // MARK: - Guiado
 
     private var guiado: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 0) {
+            cartelManiobra
+
+            ZStack(alignment: .top) {
+                MapaGuiado(
+                    ruta: navegacion.geometriaRuta,
+                    posicion: navegacion.posicionEnRuta,
+                    giro: navegacion.puntoGiro,
+                    encuadre: EncuadreMapa(
+                        posicion: navegacion.posicionEnRuta,
+                        rumbo: navegacion.rumbo,
+                        metrosAlGiro: navegacion.metrosAlGiro
+                    )
+                )
+                avisosGuiado
+                    .padding(8)
+            }
+
+            VStack(spacing: 10) {
+                HStack(spacing: 24) {
+                    if let metros = navegacion.metrosRestantes {
+                        VStack {
+                            Text("Quedan").font(.caption).foregroundStyle(.secondary)
+                            Text(verbatim: Flechas.distancia(metros)).font(.headline)
+                        }
+                    }
+                    if let segundos = navegacion.segundosRestantes {
+                        VStack {
+                            Text("Tiempo").font(.caption).foregroundStyle(.secondary)
+                            Text(verbatim: Flechas.duracion(segundos)).font(.headline)
+                        }
+                    }
+                    VStack {
+                        Text("Altitud").font(.caption).foregroundStyle(.secondary)
+                        Text(textoAltitud).font(.headline)
+                    }
+                }
+                if let destino = navegacion.destino {
+                    Text(verbatim: destino.nombre)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Button(role: .destructive) {
+                    navegacion.terminar()
+                } label: {
+                    Text("Terminar la navegación")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                atribucion
+            }
+            .padding()
+        }
+    }
+
+    /// Cartel de la maniobra, como en los navegadores: flecha, metros e
+    /// instrucción.
+    private var cartelManiobra: some View {
+        HStack(spacing: 16) {
             if navegacion.llegada {
                 Image(systemName: "flag.checkered")
-                    .font(.system(size: 120))
+                    .font(.system(size: 56, weight: .bold))
                 Text("Has llegado")
                     .font(.title.bold())
             } else {
                 Image(systemName: Flechas.simbolo(navegacion.maniobra))
-                    .font(.system(size: 140, weight: .bold))
-                    .frame(height: 170)
-                if let metros = navegacion.metrosAlGiro {
-                    Text(verbatim: Flechas.distancia(metros))
-                        .font(.system(size: 56, weight: .bold, design: .rounded))
-                        .monospacedDigit()
-                }
-                if let salida = navegacion.maniobra?.salidaRotonda {
-                    Text("Salida \(Int(salida))")
-                        .font(.title2.bold())
-                }
-                if let texto = navegacion.maniobra?.texto {
-                    Text(verbatim: texto)
-                        .font(.title3)
-                        .multilineTextAlignment(.center)
-                }
-            }
-
-            if navegacion.simulando {
-                Label("Simulación: la posición no es la real", systemImage: "play.circle")
-                    .foregroundStyle(.blue)
-            }
-
-            if navegacion.recalculando {
-                Label("Recalculando la ruta…", systemImage: "arrow.triangle.2.circlepath")
-                    .foregroundStyle(.orange)
-            } else if navegacion.fueraDeRuta {
-                Label("Fuera de ruta", systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
-            }
-
-            Divider()
-
-            HStack(spacing: 24) {
-                if let metros = navegacion.metrosRestantes {
-                    VStack {
-                        Text("Quedan").font(.caption).foregroundStyle(.secondary)
-                        Text(verbatim: Flechas.distancia(metros)).font(.headline)
+                    .font(.system(size: 64, weight: .bold))
+                    .frame(width: 80)
+                VStack(alignment: .leading, spacing: 4) {
+                    if let metros = navegacion.metrosAlGiro {
+                        Text(verbatim: Flechas.distancia(metros))
+                            .font(.system(size: 40, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                    }
+                    if let salida = navegacion.maniobra?.salidaRotonda {
+                        Text("Salida \(Int(salida))")
+                            .font(.headline)
+                    }
+                    if let texto = navegacion.maniobra?.texto {
+                        Text(verbatim: texto)
+                            .font(.headline)
+                            .lineLimit(2)
                     }
                 }
-                if let segundos = navegacion.segundosRestantes {
-                    VStack {
-                        Text("Tiempo").font(.caption).foregroundStyle(.secondary)
-                        Text(verbatim: Flechas.duracion(segundos)).font(.headline)
-                    }
-                }
-                VStack {
-                    Text("Altitud").font(.caption).foregroundStyle(.secondary)
-                    Text(textoAltitud).font(.headline)
-                }
             }
-
-            if let destino = navegacion.destino {
-                Text(verbatim: destino.nombre)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            Button(role: .destructive) {
-                navegacion.terminar()
-            } label: {
-                Text("Terminar la navegación")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-
-            atribucion
+            Spacer(minLength: 0)
         }
         .padding()
+        .frame(maxWidth: .infinity)
+        .background(.blue)
+        .foregroundStyle(.white)
+    }
+
+    @ViewBuilder
+    private var avisosGuiado: some View {
+        VStack(spacing: 6) {
+            if navegacion.simulando {
+                aviso("Simulación: la posición no es la real", icono: "play.circle", color: .blue)
+            }
+            if navegacion.recalculando {
+                aviso("Recalculando la ruta…", icono: "arrow.triangle.2.circlepath", color: .orange)
+            } else if navegacion.fueraDeRuta {
+                aviso("Fuera de ruta", icono: "exclamationmark.triangle", color: .orange)
+            }
+        }
+    }
+
+    private func aviso(_ texto: LocalizedStringKey, icono: String, color: Color) -> some View {
+        Label(texto, systemImage: icono)
+            .font(.footnote.bold())
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(.regularMaterial, in: Capsule())
+            .foregroundStyle(color)
     }
 
     // MARK: - Ayudas
@@ -210,7 +246,7 @@ struct NavegacionView: View {
     /// Atribución que exigen los datos de OpenStreetMap (ODbL) y la política de
     /// uso de Nominatim.
     private var atribucion: some View {
-        Text(verbatim: "Rutas: Valhalla (FOSSGIS) · Búsqueda: Nominatim · Datos © colaboradores de OpenStreetMap")
+        Text(verbatim: "Mapa: Apple · Rutas: Valhalla (FOSSGIS) · Búsqueda: Nominatim · Datos de ruta © colaboradores de OpenStreetMap")
             .font(.caption2)
             .foregroundStyle(.secondary)
     }

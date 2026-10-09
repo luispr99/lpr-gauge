@@ -29,6 +29,13 @@ final class Navegacion: ObservableObject {
     @Published private(set) var fueraDeRuta = false
     @Published private(set) var recalculando = false
 
+    /// Para el mapa: la ruta, la posición (ajustada a la ruta si se va por ella),
+    /// el rumbo y el punto del próximo giro.
+    @Published private(set) var geometriaRuta: [CLLocationCoordinate2D] = []
+    @Published private(set) var posicionEnRuta: CLLocationCoordinate2D?
+    @Published private(set) var rumbo: Double?
+    @Published private(set) var puntoGiro: CLLocationCoordinate2D?
+
     /// Simulación: en vez del GPS, una posición que recorre la ruta sola, para ver
     /// cambiar las indicaciones sin moverse. Avanza 10 m por paso, y cada paso
     /// dura 1 s dividido por el factor de velocidad (factor 1 = 36 km/h).
@@ -154,6 +161,10 @@ final class Navegacion: ObservableObject {
         segundosRestantes = nil
         fueraDeRuta = false
         recalculando = false
+        geometriaRuta = []
+        posicionEnRuta = nil
+        rumbo = nil
+        puntoGiro = nil
         // stopNavigation() también para la ubicación: se reanuda para la altitud
         ubicacion.startUpdating()
     }
@@ -215,6 +226,24 @@ final class Navegacion: ObservableObject {
                 texto: principal.text
             )
         }
+        // Datos del mapa. La geometría solo cambia al recalcular la ruta
+        let ruta = estado.routeGeometry
+        let rutaCambiada = ruta.count != geometriaRuta.count
+            || ruta.last?.lat != geometriaRuta.last?.latitude
+            || ruta.last?.lng != geometriaRuta.last?.longitude
+        if rutaCambiada {
+            geometriaRuta = ruta.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lng) }
+        }
+        if let yo = estado.preferredUserLocation {
+            posicionEnRuta = CLLocationCoordinate2D(latitude: yo.coordinates.lat, longitude: yo.coordinates.lng)
+            if let curso = yo.courseOverGround {
+                rumbo = Double(curso.degrees)
+            }
+        }
+        if let fin = estado.currentStep?.geometry.last {
+            puntoGiro = CLLocationCoordinate2D(latitude: fin.lat, longitude: fin.lng)
+        }
+
         if case .deviation? = estado.currentDeviation {
             fueraDeRuta = true
         } else {
