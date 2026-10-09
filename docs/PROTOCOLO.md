@@ -1,6 +1,6 @@
 # Protocolo BLE móvil → cuadro
 
-> **Estado: borrador v0.6 (2026-10-09), sin validar.** Los puntos marcados
+> **Estado: borrador v0.7 (2026-10-09), sin validar.** Los puntos marcados
 > **[PENDIENTE]** faltan por completar. Mientras sea borrador, nada de lo que hay
 > aquí es definitivo y puede cambiar sin mantener compatibilidad. Los cambios de
 > cada versión están en la [sección 13](#13-cambios).
@@ -143,6 +143,18 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
 - **Origen de la altitud** (decidido el 2026-10-08): barómetro del móvil
   combinado con el GPS si el sistema lo ofrece; si no, GPS. El campo es el mismo
   en los dos casos. La precisión vertical es la que dé esa fuente.
+- **Implementado en la v0.7 (2026-10-09)**, para un indicador de calidad del
+  GPS en el cuadro (a petición del autor). iOS no da los satélites ni la
+  señal: la calidad es la precisión horizontal que estima iOS. La posición
+  (latitud y longitud) no se manda.
+- **Ritmo:** como `TRAZO`: con cada posición, como mucho una por segundo, y
+  repetido a los 1,5-2 s mientras haya alguna. La edad se calcula al mandar,
+  así que si dejan de llegar posiciones (un túnel) va creciendo. Caduca a
+  los 5 s.
+- **Indicador del cuadro** (umbrales del autor de la app, supuestos a ajustar
+  en la moto): bueno con 10 m o menos; regular, de 10 a 30; malo, con más de
+  30; sin GPS (alerta roja) sin mensaje vigente, sin fix o con la posición de
+  hace más de 5 s.
 
 ## 7. `MOVIL` (escritura sin respuesta): estado del móvil
 
@@ -346,6 +358,9 @@ la da el ángulo de `NAV` (sección 5). Ya no se intenta seguir los códigos
 
 ## 13. Cambios
 
+- **v0.7 (2026-10-09):** `GPS` implementado (sección 6), para el indicador de
+  calidad del cuadro; el cuadro anuncia el bit 1 de capacidades. La versión
+  del formato sigue siendo 1.
 - **v0.6 (2026-10-09):** para la cara de navegación nueva del cuadro (pedida
   por el autor con una imagen de Beeline): `NAV` completo, con la tabla de
   maniobras (sección 8), la distancia y el tiempo restantes, la hora de

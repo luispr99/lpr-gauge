@@ -26,11 +26,18 @@ public struct RutaConCruces: Equatable {
     /// Metros del trazado entero (los de `recorrido` de los cruces llegan
     /// hasta aquí).
     public var longitud: Double
+    /// La vía de cada paso, en orden (los de todos los tramos seguidos), como
+    /// se escribe junto a la flecha (RespuestaOSRM.via); vacío si no tiene
+    /// nombre ni número. Ferrostar 0.57.0 lee el `ref` de cada paso pero no lo
+    /// da en sus RouteStep, y sin él las carreteras que solo tienen número
+    /// (M-510, N-6) se quedaban sin texto (lo vio la revisión de la 0.10.0).
+    public var vias: [String]
 
-    public init(puntos: [PuntoRuta], cruces: [Cruce]) {
+    public init(puntos: [PuntoRuta], cruces: [Cruce], vias: [String] = []) {
         self.puntos = puntos
         self.cruces = cruces
         self.longitud = RespuestaOSRM.recorridos(puntos).last ?? 0
+        self.vias = vias
     }
 }
 
@@ -52,8 +59,10 @@ public enum RespuestaOSRM {
             let puntos = Polilinea.decodificar(ruta.geometry, precision: 6)
             let hastaPunto = RespuestaOSRM.recorridos(puntos)
             var cruces: [Cruce] = []
+            var vias: [String] = []
             for tramo in ruta.legs ?? [] {
                 for paso in tramo.steps ?? [] {
+                    vias.append(via(nombre: paso.name, numero: paso.ref))
                     for cruce in paso.intersections ?? [] {
                         guard cruce.location.count >= 2, let rumbos = cruce.bearings else { continue }
                         // Las calles laterales: todas salvo la de llegada y la de salida
@@ -70,8 +79,18 @@ public enum RespuestaOSRM {
                     }
                 }
             }
-            return RutaConCruces(puntos: puntos, cruces: cruces)
+            return RutaConCruces(puntos: puntos, cruces: cruces, vias: vias)
         }
+    }
+
+    /// La vía de un paso como se escribe junto a la flecha: el número y el
+    /// nombre («A-6, Autovía del Noroeste»), o el que haya («M-510», «Calle
+    /// Mayor»); vacío si no hay ninguno.
+    public static func via(nombre: String?, numero: String?) -> String {
+        let partes = [numero, nombre]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return partes.joined(separator: ", ")
     }
 
     /// Metros recorridos hasta cada punto del trazado, desde el primero.
@@ -102,6 +121,8 @@ public enum RespuestaOSRM {
 
     struct Paso: Decodable {
         let intersections: [Interseccion]?
+        let name: String?
+        let ref: String?
     }
 
     struct Interseccion: Decodable {

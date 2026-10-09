@@ -232,6 +232,9 @@ final class Navegacion: ObservableObject {
     /// y la tarjeta usa los de las maniobras, como un máximo.
     @Published private(set) var detalles: [Int: DetalleVias] = [:]
     @Published private(set) var detallesFallidos: Set<Int> = []
+    /// Hay otras rutas dentro del tiempo extra, aunque con menos curvas que la
+    /// más rápida (elegirVariantes).
+    @Published private(set) var otrasEnMargen = false
     private var tareaDetalles: Task<Void, Never>?
     /// Cálculo de rutas o inicio en curso. Cada cálculo nuevo cancela el
     /// anterior; la generación evita que uno viejo pise los datos del nuevo.
@@ -453,7 +456,15 @@ final class Navegacion: ObservableObject {
             variantes = []
             sinRutaDeAsfalto = false
             sinRutaPorTierra = false
+            otrasEnMargen = false
             return
+        }
+        // ¿Hay más rutas dentro del margen, aunque con menos curvas? Para que
+        // la tarjeta vacía no diga «no hay coincidencia» cuando sí las hay
+        // (lo vio la revisión de la 0.10.0)
+        let limite = candidatas[eleccion.rapida].ruta.segundos * (1 + max(0, margenExtra))
+        otrasEnMargen = candidatas.indices.contains {
+            $0 != eleccion.rapida && !candidatas[$0].ruta.tierraEnMedio && candidatas[$0].ruta.segundos <= limite
         }
         // Una ruta con varios papeles sale una sola vez
         var papeles: [(indice: Int, tipos: [TipoVariante])] = []
@@ -732,38 +743,48 @@ final class Navegacion: ObservableObject {
             metrosRestantes = progreso.distanceRemaining
             segundosRestantes = progreso.durationRemaining
         }
-        if let visual = estado.currentVisualInstruction {
-            let principal = visual.primaryContent
-            // Según el código de Valhalla, el número de salida de la próxima
-            // rotonda va en el paso siguiente (sin probar con una ruta real).
-            // El lado de la circulación, también del paso de la maniobra
-            let siguiente = estado.remainingSteps?.dropFirst().first
-            maniobra = Maniobra(
-                tipo: principal.maneuverType,
-                modificador: principal.maneuverModifier,
-                gradosRotonda: principal.roundaboutExitDegrees,
-                salidaRotonda: siguiente?.roundaboutExitNumber,
-                ladoCirculacion: siguiente?.drivingSide ?? estado.currentStep?.drivingSide,
-                // Solo la vía, la salida o «Destino», no la frase de la
-                // instrucción (Flechas.nombre). La vía, la del paso siguiente
-                texto: Flechas.nombre(
-                    tipo: principal.maneuverType,
-                    salidaRotonda: siguiente?.roundaboutExitNumber,
-                    salidas: principal.exitNumbers.isEmpty ? (siguiente?.exits ?? []) : principal.exitNumbers,
-                    via: siguiente?.roadName
-                )
-            )
-        }
-
         // Datos del mapa. La geometría solo cambia al recalcular la ruta. Con
-        // ella cambian los cruces: los de la respuesta con el mismo trazado
-        // (si no aparece, sin cruces)
+        // ella cambian los cruces y las vías de los pasos: los de la respuesta
+        // con el mismo trazado (si no aparece, sin cruces). Antes de la
+        // maniobra, que usa sus vías
         let ruta = estado.routeGeometry
         if ruta != geometriaGuiado {
             geometriaGuiado = ruta
             geometriaRuta = ruta.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lng) }
             let puntos = ruta.map { PuntoRuta(latitud: $0.lat, longitud: $0.lng) }
             rutaCruces = Cruces.buscar(puntos, en: RutasRecientes.compartida.todas())
+        }
+
+        if let visual = estado.currentVisualInstruction {
+            let principal = visual.primaryContent
+            // El número de salida de la próxima rotonda va en el paso
+            // siguiente; ya dentro de ella (instrucción «salga de la
+            // rotonda»), en el actual, que es el de la rotonda (comprobado con
+            // respuestas de Valhalla; lo vio la revisión de la 0.10.0). El lado
+            // de la circulación, del paso de la maniobra
+            let siguiente = estado.remainingSteps?.dropFirst().first
+            let salidaRotonda: UInt8?
+            switch principal.maneuverType {
+            case .exitRoundabout?, .exitRotary?:
+                salidaRotonda = siguiente?.roundaboutExitNumber ?? estado.currentStep?.roundaboutExitNumber
+            default:
+                salidaRotonda = siguiente?.roundaboutExitNumber
+            }
+            maniobra = Maniobra(
+                tipo: principal.maneuverType,
+                modificador: principal.maneuverModifier,
+                gradosRotonda: principal.roundaboutExitDegrees,
+                salidaRotonda: salidaRotonda,
+                ladoCirculacion: siguiente?.drivingSide ?? estado.currentStep?.drivingSide,
+                // Solo la vía, la salida o «Destino», no la frase de la
+                // instrucción (Flechas.nombre). La vía, la del paso siguiente
+                texto: Flechas.nombre(
+                    tipo: principal.maneuverType,
+                    salidaRotonda: salidaRotonda,
+                    salidas: principal.exitNumbers.isEmpty ? (siguiente?.exits ?? []) : principal.exitNumbers,
+                    via: viaSiguiente(estado) ?? siguiente?.roadName
+                )
+            )
         }
         if let yo = estado.preferredUserLocation {
             posicionEnRuta = CLLocationCoordinate2D(latitude: yo.coordinates.lat, longitude: yo.coordinates.lng)
@@ -816,11 +837,16 @@ final class Navegacion: ObservableObject {
             if enlace.admiteTrazo,
                let calculo = trazoParaCuadro(estado, maximoPuntos: enlace.puntosTrazoQueCaben) {
                 // Solo los cruces de este trozo de la ruta entera: desde la moto
-                // (lo que falta, restado de la longitud) hasta el final del tramo
+                // (lo que falta, restado de la longitud) hasta el final del tramo.
+                // Con 50 m de holgura por detrás: Ferrostar mide lo que falta del
+                // paso con otra fórmula (Haversine) y la moto podía quedar unos
+                // metros adelantada, quitando los primeros cruces (lo vio la
+                // revisión de la 0.10.0); los ya pasados los quita igual
+                // Cruces.calles, por la posición en el tramo
                 let ventana: ClosedRange<Double>? = rutaCruces.flatMap { ruta in
                     estado.currentProgress.map { progreso in
                         let moto = max(0, ruta.longitud - progreso.distanceRemaining)
-                        return moto...(moto + Trazo.metrosTramo(nivel: calculo.nivel))
+                        return max(0, moto - 50)...(moto + Trazo.metrosTramo(nivel: calculo.nivel))
                     }
                 }
                 let calles = enlace.admiteCruces
@@ -872,6 +898,18 @@ final class Navegacion: ObservableObject {
         )
     }
 
+    /// La vía del paso siguiente (el que empieza en la maniobra), con su
+    /// número de carretera: de la respuesta OSRM de la ruta del guiado
+    /// (RutaConCruces.vias). Los pasos de Ferrostar son los mismos y en el
+    /// mismo orden, así que el siguiente es el total menos los que quedan, más
+    /// uno. Nil si no se sabe o si la vía no tiene nombre ni número.
+    private func viaSiguiente(_ estado: NavigationState) -> String? {
+        guard let vias = rutaCruces?.vias, let pasos = estado.remainingSteps else { return nil }
+        let indice = vias.count - pasos.count + 1
+        guard vias.indices.contains(indice), !vias[indice].isEmpty else { return nil }
+        return vias[indice]
+    }
+
     /// Hora de llegada prevista (NAV, v0.6): en minutos desde la medianoche,
     /// con la hora local del iPhone, redondeada al minuto. Nil sin tiempo.
     private static func horaLlegada(dentroDe segundos: Double) -> Int? {
@@ -919,6 +957,8 @@ final class Navegacion: ObservableObject {
 
     private func posicionNueva(_ posicion: CLLocation) {
         posicionActual = posicion.coordinate
+        // Al cuadro, para el indicador de calidad del GPS (GPS, v0.7)
+        enlace?.ponerPosicion(posicion)
         if posicion.verticalAccuracy > 0 {
             altitud = posicion.altitude
             precisionVertical = posicion.verticalAccuracy

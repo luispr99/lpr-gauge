@@ -118,6 +118,17 @@ struct PlacaView: View {
                 } footer: {
                     Text("Con una ruta iniciada, la app manda el tramo de ruta que queda por delante para dibujarlo en la cara de navegación, con las calles que salen de él.")
                 }
+
+                Section {
+                    LabeledContent("GPS") {
+                        Text(enlace.admiteGPS ? "Con cada posición" : "La placa no lo admite")
+                    }
+                    LabeledContent("Eco de la placa") { Text(texto(enlace.ecoGPS)) }
+                } header: {
+                    Text("GPS en el cuadro")
+                } footer: {
+                    Text("La precisión de la posición, para el punto de color del GPS en la cara de navegación. La posición no se manda.")
+                }
             }
             .scrollDismissesKeyboard(.interactively)
             .botonOcultarTeclado()

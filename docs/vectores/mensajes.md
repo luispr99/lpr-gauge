@@ -104,7 +104,7 @@ medianoche y longitud del paso (todos `u16`).
 | Caso | Bytes |
 |---|---|
 | Sin calles, secuencia 0, del `TRAZO` 0 | `01 00 00 00` |
-| Secuencia 3, del `TRAZO` 7: dos calles en (0, 120), a la derecha (64) y a la izquierda (192), y una en (−15,4; 300,6) hacia atrás a la izquierda (200) | `01 03 07 03 00 00 78 00 40 00 00 78 00 C0 F1 FF 2D 01 C8` |
+| Secuencia 3, del `TRAZO` 7: dos calles en (0, 120), a la derecha (64) y a la izquierda (192), y una en (−15,4; 300,6) a la izquierda, algo hacia delante (200: 281°) | `01 03 07 03 00 00 78 00 40 00 00 78 00 C0 F1 FF 2D 01 C8` |
 
 - Coordenadas como en `TRAZO` (se redondean y se saturan igual); la dirección,
   en 1/256 de vuelta.
@@ -114,6 +114,18 @@ medianoche y longitud del paso (todos `u16`).
   (`01 00 05 02 00 00 0A 00 40 01`: una calle, (0, 10) a la derecha); lo que
   sobra se ignora. Se descartan `01 03 07` (corto) y la versión 2.
 
+## `GPS`
+
+| Caso | Bytes |
+|---|---|
+| Secuencia 3: posición de hace 0,4 s, altitud 712 m (precisión 6,2 m), 13,89 m/s, rumbo 271,5°, precisión horizontal 4,7 m | `01 03 0F 04 C8 02 06 6D 05 0E 6A 05` |
+| Secuencia 0, sin posición, app en segundo plano | `01 00 10 FF 00 80 FF FF FF FF FF FF` |
+
+- Se redondea: 0,4 s son 4 décimas, 6,2 m son 6 y 4,7 m son 5.
+- La edad satura en 254 décimas (25,4 s) y las precisiones en 254 m; la
+  altitud negativa va en complemento a dos (-12 m: `F4 FF`).
+- Se descarta un mensaje de menos de 12 bytes.
+
 ## `DEVICE_INFO`
 
 | Caso | Bytes | Tipo | Capacidades | Frecuencia | Firmware |
@@ -121,6 +133,6 @@ medianoche y longitud del paso (todos `u16`).
 | Firmware de referencia 0.1.0 | `01 02 24 00 00 00 01 00` | 2 | `STATUS` + `MOVIL` (0x0024) | sin límite | 0.1.0 |
 | Cuadro, primera integración LPR | `01 01 2C 00 00 00 01 00` | 1 | `STATUS` + `NAV_TEXT` + `MOVIL` (0x002C) | sin límite | 0.1.0 |
 | Cuadro con el trazo y MOVIL al cambiar | `01 01 EC 00 00 00 02 00` | 1 | `STATUS` + `NAV_TEXT` + `MOVIL` + `TRAZO` + MOVIL al cambiar (0x00EC) | sin límite | 0.2.0 |
-| Cuadro con `NAV` y `CRUCES` (ejemplo) | `01 01 ED 01 00 00 03 00` | 1 | `NAV` + `STATUS` + `NAV_TEXT` + `MOVIL` + `TRAZO` + MOVIL al cambiar + `CRUCES` (0x01ED) | sin límite | 0.3.0 |
+| Cuadro con `NAV`, `GPS` y `CRUCES` | `01 01 EF 01 00 00 03 00` | 1 | `NAV` + `GPS` + `STATUS` + `NAV_TEXT` + `MOVIL` + `TRAZO` + MOVIL al cambiar + `CRUCES` (0x01EF) | sin límite | 0.3.0 |
 
 - Se descarta cualquier mensaje de menos de 8 bytes.

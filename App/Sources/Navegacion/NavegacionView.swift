@@ -335,10 +335,10 @@ struct NavegacionView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             // Mientras se prepara la navegación, la elegida no se cambia. Si la
-            // de más curvas es la misma que la más rápida (no hay otra dentro
-            // del tiempo extra), su tarjeta sale igual, vacía: «No hay
-            // coincidencia» (a petición del autor, 2026-10-09: sin una tarjeta
-            // grande sola). La más rápida lleva entonces solo su nombre
+            // de más curvas es la misma que la más rápida, su tarjeta sale
+            // igual, vacía (a petición del autor, 2026-10-09: sin una tarjeta
+            // grande sola; tarjetaSinCoincidencia). La más rápida lleva
+            // entonces solo su nombre
             let sinCurvasAparte = navegacion.variantes.contains {
                 $0.tipos.contains(.rapida) && $0.tipos.contains(.divertida)
             }
@@ -451,7 +451,11 @@ struct NavegacionView: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
                 Spacer(minLength: 0)
-                Text("No hay coincidencia con \(textoMargen) de tiempo extra")
+                // Si hay otras dentro del margen pero con menos curvas, subirlo
+                // no ayudaría: se dice lo que pasa
+                Text(navegacion.otrasEnMargen
+                     ? "La más rápida es también la de más curvas"
+                     : "No hay coincidencia con \(textoMargen) de tiempo extra")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)

@@ -37,6 +37,8 @@ final class CrucesTests: XCTestCase {
                   ]
                 },
                 {
+                  "name": "Calle Mayor",
+                  "ref": "M-510",
                   "intersections": [
                     { "location": [-3.0, 40.0018], "bearings": [180], "entry": [true], "in": 0 }
                   ]
@@ -77,6 +79,18 @@ final class CrucesTests: XCTestCase {
         XCTAssertEqual(rutas[0].longitud, 200.38, accuracy: 0.05)
         XCTAssertEqual(rutas[1].puntos.count, 1)
         XCTAssertEqual(rutas[1].cruces, [])
+        // Las vías de los pasos (sin name ni ref en esta respuesta: vacías)
+        XCTAssertEqual(rutas[0].vias, ["", "M-510, Calle Mayor"])
+        XCTAssertEqual(rutas[1].vias, [""])
+    }
+
+    func testVia() {
+        // Número y nombre, el que haya, o nada (revisión de la 0.10.0: las
+        // carreteras con solo número se quedaban sin texto)
+        XCTAssertEqual(RespuestaOSRM.via(nombre: "Autovía del Noroeste", numero: "A-6"), "A-6, Autovía del Noroeste")
+        XCTAssertEqual(RespuestaOSRM.via(nombre: "", numero: "M-510"), "M-510")
+        XCTAssertEqual(RespuestaOSRM.via(nombre: "Calle Mayor", numero: nil), "Calle Mayor")
+        XCTAssertEqual(RespuestaOSRM.via(nombre: "  ", numero: nil), "")
     }
 
     func testNoEsUnaRespuestaOSRM() {

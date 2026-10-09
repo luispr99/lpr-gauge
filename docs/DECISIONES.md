@@ -501,6 +501,33 @@ final.
     los avisos salen un momento después que las rutas. Por debajo de 100 m no
     se avisa. Si la petición falla, se usan los de las maniobras con «hasta».
   - La elección de rutas no cambia: sigue con los datos de las maniobras.
+- **0.11.0** (2026-10-09):
+  - **GPS en el cuadro** (protocolo v0.7, a petición del autor). Un punto de
+    color junto a «GPS», abajo en la franja negra; sin GPS, una alerta roja.
+    - iOS no da los satélites: la calidad es la precisión horizontal. La app
+      manda la característica `GPS` (§6, definida desde la v0.1), sin la
+      posición.
+    - Umbrales (supuestos): 10 y 30 m.
+  - **Segunda revisión de la integración** (workflow con un escéptico por
+    hallazgo):
+    - Junto a la flecha salen otra vez las carreteras que solo tienen número
+      (M-510, N-6). Ferrostar no da el `ref` de los pasos, así que sale de la
+      respuesta OSRM (`RutaConCruces.vias`): «A-6, Autovía del Noroeste».
+    - Dentro de la rotonda ya no se pierde «Salida N»: el número va en el paso
+      actual.
+    - La ventana de los cruces tiene 50 m de holgura por detrás.
+    - Si la de más curvas es la más rápida pero hay otras dentro del margen,
+      la tarjeta vacía dice «La más rápida es también la de más curvas».
+- **Velocidad máxima de cada vía: de momento no** (decisión del autor,
+  2026-10-09).
+  - Lo comprobado: Ferrostar 0.57.0 ya la pide a Valhalla en cada ruta
+    (`shape_attributes.speed_limit`) y la ofrece durante el guiado
+    (`AnnotationPublisher.valhallaExtendedOSRM`). Sale de la etiqueta
+    `maxspeed` de OpenStreetMap.
+  - En Segovia → Ávila → Talavera, 110 de 187 km (59 %) tenían límite
+    conocido; el resto, desconocido.
+  - Si se retoma: decidir qué hacer con los tramos sin dato, y añadir un campo
+    a `NAV` para el cuadro.
 - **Cuadro:** se hace en su proyecto (el código no entra en este
   repositorio): `docs/CAMBIOS_CLAUDE.md`, sección 76.
 

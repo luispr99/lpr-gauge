@@ -1,4 +1,5 @@
 import CoreBluetooth
+import CoreLocation
 import Foundation
 import os
 import UIKit
@@ -59,6 +60,8 @@ final class EnlaceBLE: NSObject, ObservableObject {
     @Published private(set) var ecoNav: UInt8?
     /// El último eco de CRUCES de la placa (van con cada TRAZO).
     @Published private(set) var ecoCruces: UInt8?
+    /// El último eco de GPS de la placa (v0.7).
+    @Published private(set) var ecoGPS: UInt8?
 
     private var central: CBCentralManager?
     private var periferico: CBPeripheral?
@@ -69,20 +72,24 @@ final class EnlaceBLE: NSObject, ObservableObject {
     private var caracTrazo: CBCharacteristic?
     private var caracNav: CBCharacteristic?
     private var caracCruces: CBCharacteristic?
+    private var caracGPS: CBCharacteristic?
     private var secuencia = Secuencia()
     /// Cada característica lleva su secuencia (PROTOCOLO.md §3).
     private var secuenciaTexto = Secuencia()
     private var secuenciaTrazo = Secuencia()
     private var secuenciaNav = Secuencia()
     private var secuenciaCruces = Secuencia()
+    private var secuenciaGPS = Secuencia()
     private var textoPendiente = false
     private var trazoPendiente = false
     private var navPendiente = false
     private var crucesPendiente = false
+    private var gpsPendiente = false
     private var primerTextoAnotado = false
     private var primerTrazoAnotado = false
     private var primerNavAnotado = false
     private var primerCrucesAnotado = false
+    private var primerGPSAnotado = false
     /// Cuándo se mandó por última vez cada característica: el mantenimiento
     /// (§10) repite cada una cuando le toca, no todas a la vez, para que no
     /// salgan en ráfagas (lo vio la revisión de la 0.9.0).
@@ -90,6 +97,13 @@ final class EnlaceBLE: NSObject, ObservableObject {
     private var ultimoTexto: Date?
     private var ultimoTrazo: Date?
     private var ultimoNav: Date?
+    private var ultimoGPS: Date?
+    /// La última posición del GPS (ponerPosicion) y si es más nueva que la
+    /// última mandada. La edad se calcula al mandar: así, si dejan de llegar
+    /// posiciones (un túnel), el mantenimiento la manda cada vez más vieja y
+    /// el cuadro lo ve.
+    private var posicionGPS: CLLocation?
+    private var gpsNuevo = false
     /// Hay un tramo más nuevo que el último mandado (llegó antes de 1 s).
     private var trazoNuevo = false
     /// Hay una maniobra (NAV) distinta de la última mandada (llegó antes de 1 s).
@@ -125,6 +139,7 @@ final class EnlaceBLE: NSObject, ObservableObject {
     private let uuidTrazo = CBUUID(string: Protocolo.UUIDs.trazo)
     private let uuidNav = CBUUID(string: Protocolo.UUIDs.nav)
     private let uuidCruces = CBUUID(string: Protocolo.UUIDs.cruces)
+    private let uuidGPS = CBUUID(string: Protocolo.UUIDs.gps)
 
     override init() {
         super.init()
@@ -337,6 +352,7 @@ final class EnlaceBLE: NSObject, ObservableObject {
         caracTrazo = nil
         caracNav = nil
         caracCruces = nil
+        caracGPS = nil
         info = nil
         mantenimiento?.invalidate()
         mantenimiento = nil
@@ -344,6 +360,8 @@ final class EnlaceBLE: NSObject, ObservableObject {
         ultimoTexto = nil
         ultimoTrazo = nil
         ultimoNav = nil
+        ultimoGPS = nil
+        gpsNuevo = false
         trazoNuevo = false
         navNuevo = false
         crucesDelTrazo = nil
@@ -356,10 +374,12 @@ final class EnlaceBLE: NSObject, ObservableObject {
         trazoPendiente = false
         navPendiente = false
         crucesPendiente = false
+        gpsPendiente = false
         primerTextoAnotado = false
         primerTrazoAnotado = false
         primerNavAnotado = false
         primerCrucesAnotado = false
+        primerGPSAnotado = false
         primerEnvioAnotado = false
         colaLlenaAnotada = false
         primerStatusAnotado = false
@@ -378,7 +398,8 @@ final class EnlaceBLE: NSObject, ObservableObject {
             anotar("La placa no muestra el servicio LPR. Si el iPhone recuerda los servicios antiguos, omite la placa en Ajustes > Bluetooth (PROTOCOLO.md §11)")
             return
         }
-        periferico.discoverCharacteristics([uuidInfo, uuidStatus, uuidMovil, uuidTexto, uuidTrazo, uuidNav, uuidCruces],
+        periferico.discoverCharacteristics([uuidInfo, uuidStatus, uuidMovil, uuidTexto, uuidTrazo, uuidNav, uuidCruces,
+                                            uuidGPS],
                                            for: servicio)
     }
 
@@ -397,6 +418,7 @@ final class EnlaceBLE: NSObject, ObservableObject {
             case uuidTrazo: caracTrazo = caracteristica
             case uuidNav: caracNav = caracteristica
             case uuidCruces: caracCruces = caracteristica
+            case uuidGPS: caracGPS = caracteristica
             default: break
             }
         }
@@ -461,9 +483,13 @@ final class EnlaceBLE: NSObject, ObservableObject {
             if let eco = status.ecoCruces {
                 ecoCruces = eco
             }
-            // El eco de NAV va siempre (byte 1); solo vale si la placa lo admite
+            // El eco de NAV va siempre (byte 1); solo vale si la placa lo admite.
+            // El de GPS, igual (byte 2)
             if admiteNav {
                 ecoNav = status.ecoNav
+            }
+            if admiteGPS {
+                ecoGPS = status.ecoGPS
             }
             // Mantenimiento también al recibir STATUS (§10): en segundo plano el
             // temporizador puede no dispararse, y cada aviso de la placa
@@ -514,6 +540,7 @@ final class EnlaceBLE: NSObject, ObservableObject {
     private func listo() {
         guard let periferico, let info else { return }
         guard caracStatus != nil || caracMovil != nil || caracTexto != nil || caracTrazo != nil || caracNav != nil
+                || caracGPS != nil
         else { return }
         if let caracStatus {
             ignorarLatencia = true
@@ -524,6 +551,7 @@ final class EnlaceBLE: NSObject, ObservableObject {
         let conTexto = info.capacidades.contains(.navText) && caracTexto != nil
         let conTrazo = admiteTrazo
         let conNav = admiteNav
+        let conGPS = admiteGPS
         if !conMovil {
             anotar("La placa no admite MOVIL")
         }
@@ -538,7 +566,10 @@ final class EnlaceBLE: NSObject, ObservableObject {
         if !conNav {
             anotar("La placa no admite NAV (siguiente maniobra)")
         }
-        guard conMovil || conTexto || conTrazo || conNav else { return }
+        if !conGPS {
+            anotar("La placa no admite GPS")
+        }
+        guard conMovil || conTexto || conTrazo || conNav || conGPS else { return }
         mantenimiento?.invalidate()
         // Cada 0,5 s se mira qué toca mandar (mantener)
         let temporizador = Timer(timeInterval: Self.tic, repeats: true) { [weak self] _ in
@@ -591,6 +622,63 @@ final class EnlaceBLE: NSObject, ObservableObject {
         }
         if trazoActivo, todo || pasado(ultimoTrazo, Self.repeticion) || (trazoNuevo && pasado(ultimoTrazo, Self.cambioMinimo)) {
             enviarTrazo()
+        }
+        // GPS (§6, v0.7): mientras haya alguna posición, como el tramo
+        if posicionGPS != nil, todo || pasado(ultimoGPS, Self.repeticion) || (gpsNuevo && pasado(ultimoGPS, Self.cambioMinimo)) {
+            enviarGPS()
+        }
+    }
+
+    // MARK: - GPS (PROTOCOLO.md §6, v0.7)
+
+    /// Si la placa conectada admite GPS: el indicador de calidad del cuadro.
+    var admiteGPS: Bool {
+        estado == .conectado && caracGPS != nil && info?.capacidades.contains(.gps) == true
+    }
+
+    /// Cada posición del GPS (la pone Navegacion, también con la simulación:
+    /// el indicador es del GPS de verdad). Sale como mucho una por segundo;
+    /// las de entre medias, con la siguiente.
+    func ponerPosicion(_ posicion: CLLocation) {
+        posicionGPS = posicion
+        if ultimoGPS.map({ Date().timeIntervalSince($0) >= Self.cambioMinimo }) ?? true {
+            enviarGPS()
+        } else {
+            gpsNuevo = true
+        }
+    }
+
+    private func enviarGPS() {
+        guard admiteGPS, let periferico, let caracGPS, let posicion = posicionGPS else { return }
+        guard periferico.canSendWriteWithoutResponse else {
+            // Se manda en cuanto iOS avise de que hay hueco (peripheralIsReady)
+            gpsPendiente = true
+            return
+        }
+        gpsPendiente = false
+        // Lo que iOS da como negativo es «sin dato» (CLLocation)
+        let mensaje = MensajeGPS(
+            secuencia: secuenciaGPS.siguiente(),
+            edad: max(0, Date().timeIntervalSince(posicion.timestamp)),
+            altitud: posicion.verticalAccuracy > 0 ? posicion.altitude : nil,
+            precisionVertical: posicion.verticalAccuracy > 0 ? posicion.verticalAccuracy : nil,
+            velocidad: posicion.speed >= 0 ? posicion.speed : nil,
+            rumbo: posicion.course >= 0 ? posicion.course : nil,
+            precisionHorizontal: posicion.horizontalAccuracy >= 0 ? posicion.horizontalAccuracy : nil,
+            enSegundoPlano: UIApplication.shared.applicationState != .active
+        )
+        let bytes = mensaje.codificar()
+        guard bytes.count <= periferico.maximumWriteValueLength(for: .withoutResponse) else {
+            anotar("GPS no cabe en el MTU actual")
+            return
+        }
+        periferico.writeValue(Data(bytes), for: caracGPS, type: .withoutResponse)
+        ultimoGPS = Date()
+        gpsNuevo = false
+        if !primerGPSAnotado {
+            primerGPSAnotado = true
+            // Sin la posición: no se manda (§6) ni se escribe
+            anotar("GPS enviado (seq \(mensaje.secuencia), \(bytes.count) bytes)")
         }
     }
 
@@ -892,6 +980,9 @@ final class EnlaceBLE: NSObject, ObservableObject {
         }
         // Los cruces que esperaban van antes que un tramo nuevo: son del que
         // ya tiene la placa
+        if gpsPendiente {
+            enviarGPS()
+        }
         if crucesPendiente {
             enviarCruces()
         }

@@ -1,4 +1,4 @@
-// Codificación y decodificación de los mensajes (docs/PROTOCOLO.md, v0.6).
+// Codificación y decodificación de los mensajes (docs/PROTOCOLO.md, v0.7).
 // Reglas comunes (sección 3): little-endian, primer byte = versión, campos
 // nuevos al final; el receptor ignora los bytes que sobran y descarta los
 // mensajes cortos o con una versión que no conoce.
@@ -183,6 +183,91 @@ public struct MensajeNav: Equatable {
             mensaje.longitudPaso = valor(15)
         }
         return mensaje
+    }
+}
+
+// MARK: - GPS (sección 6)
+
+/// Un valor sin signo en u8 (GPS): redondeado y saturado entre 0 y 254; sin
+/// dato o no finito, 255 (desconocido).
+func u8Saturado(_ valor: Double?) -> UInt8 {
+    guard let valor, valor.isFinite else { return 255 }
+    return UInt8(min(254, max(0, valor.rounded())))
+}
+
+/// Estado del GPS del móvil (§6). Definido desde la v0.1 e implementado en la
+/// v0.7 (2026-10-09), para el indicador de calidad del cuadro (a petición del
+/// autor). iOS no da los satélites ni la señal: la calidad es la precisión
+/// horizontal que estima.
+public struct MensajeGPS: Equatable {
+    public static let longitudMinima = 12
+
+    public var secuencia: UInt8
+    /// Segundos desde que se tomó la posición; nil sin posición.
+    public var edad: Double?
+    /// Metros sobre el nivel del mar.
+    public var altitud: Double?
+    public var precisionVertical: Double?
+    /// Metros por segundo.
+    public var velocidad: Double?
+    /// Grados desde el norte verdadero, en sentido horario.
+    public var rumbo: Double?
+    /// Metros: el radio en el que iOS cree que está la posición.
+    public var precisionHorizontal: Double?
+    public var enSegundoPlano: Bool
+
+    public init(secuencia: UInt8, edad: Double? = nil, altitud: Double? = nil, precisionVertical: Double? = nil,
+                velocidad: Double? = nil, rumbo: Double? = nil, precisionHorizontal: Double? = nil,
+                enSegundoPlano: Bool = false) {
+        self.secuencia = secuencia
+        self.edad = edad
+        self.altitud = altitud
+        self.precisionVertical = precisionVertical
+        self.velocidad = velocidad
+        self.rumbo = rumbo
+        self.precisionHorizontal = precisionHorizontal
+        self.enSegundoPlano = enSegundoPlano
+    }
+
+    /// Los 12 bytes. El fix es válido (bit 0) con edad y precisión
+    /// horizontal; cada dato que falta va con su valor de desconocido.
+    public func codificar() -> [UInt8] {
+        var flags: UInt8 = 0
+        if edad != nil && precisionHorizontal != nil { flags |= 0x01 }
+        if altitud != nil { flags |= 0x02 }
+        if velocidad != nil { flags |= 0x04 }
+        if rumbo != nil { flags |= 0x08 }
+        if enSegundoPlano { flags |= 0x10 }
+        var bytes: [UInt8] = [Protocolo.version, secuencia, flags, u8Saturado(edad.map { $0 * 10 })]
+        bytes.anadirU16(altitud.flatMap { metros -> UInt16? in
+            guard metros.isFinite else { return nil }
+            return UInt16(bitPattern: Int16(min(32_767, max(-32_767, metros.rounded()))))
+        } ?? 0x8000)
+        bytes.append(u8Saturado(precisionVertical))
+        bytes.anadirU16(u16Saturado(velocidad.map { $0 * 100 }))
+        bytes.anadirU16(u16Saturado(rumbo.map { grados -> Double in
+            let normal = grados.truncatingRemainder(dividingBy: 360)
+            return (normal < 0 ? normal + 360 : normal) * 100
+        }))
+        bytes.append(u8Saturado(precisionHorizontal))
+        return bytes
+    }
+
+    public static func decodificar(_ bytes: [UInt8]) -> MensajeGPS? {
+        guard bytes.count >= longitudMinima, bytes[0] == Protocolo.version else { return nil }
+        let altitud = leerU16(bytes, 4)
+        let velocidad = leerU16(bytes, 7)
+        let rumbo = leerU16(bytes, 9)
+        return MensajeGPS(
+            secuencia: bytes[1],
+            edad: bytes[3] == 255 ? nil : Double(bytes[3]) / 10,
+            altitud: altitud == 0x8000 ? nil : Double(Int16(bitPattern: altitud)),
+            precisionVertical: bytes[6] == 255 ? nil : Double(bytes[6]),
+            velocidad: velocidad == 0xFFFF ? nil : Double(velocidad) / 100,
+            rumbo: rumbo == 0xFFFF ? nil : Double(rumbo) / 100,
+            precisionHorizontal: bytes[11] == 255 ? nil : Double(bytes[11]),
+            enSegundoPlano: bytes[2] & 0x10 != 0
+        )
     }
 }
 

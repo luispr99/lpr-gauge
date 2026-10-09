@@ -203,6 +203,32 @@ final class MensajesTests: XCTestCase {
         XCTAssertEqual(CodigoManiobra.anguloRotonda(grados: 270, porLaDerecha: false), 90)
     }
 
+    // MARK: GPS
+
+    func testGPSCodifica() {
+        let mensaje = MensajeGPS(secuencia: 3, edad: 0.4, altitud: 712, precisionVertical: 6.2,
+                                 velocidad: 13.89, rumbo: 271.5, precisionHorizontal: 4.7)
+        XCTAssertEqual(mensaje.codificar(), [0x01, 0x03, 0x0F, 0x04, 0xC8, 0x02, 0x06, 0x6D, 0x05, 0x0E, 0x6A, 0x05])
+        // Sin posición, en segundo plano
+        XCTAssertEqual(MensajeGPS(secuencia: 0, enSegundoPlano: true).codificar(),
+                       [0x01, 0x00, 0x10, 0xFF, 0x00, 0x80, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF])
+    }
+
+    func testGPSSaturaYDecodifica() {
+        // Edad de más de 25,4 s y precisión de más de 254 m: saturan; altitud negativa
+        let bytes = MensajeGPS(secuencia: 9, edad: 60, altitud: -12, precisionHorizontal: 900).codificar()
+        XCTAssertEqual(bytes[3], 254)
+        XCTAssertEqual(bytes[11], 254)
+        XCTAssertEqual(Array(bytes[4...5]), [0xF4, 0xFF])
+        let leido = MensajeGPS.decodificar(bytes)
+        XCTAssertEqual(leido?.edad, 25.4)
+        XCTAssertEqual(leido?.altitud, -12)
+        XCTAssertEqual(leido?.precisionHorizontal, 254)
+        XCTAssertNil(leido?.velocidad)
+        XCTAssertEqual(leido?.enSegundoPlano, false)
+        XCTAssertNil(MensajeGPS.decodificar(Array(bytes.prefix(11))))
+    }
+
     // MARK: TRAZO
 
     func testTrazoSinTramo() {
@@ -390,6 +416,9 @@ final class MensajesTests: XCTestCase {
         let info = DeviceInfo.decodificar([0x01, 0x01, 0xED, 0x01, 0x00, 0x00, 0x03, 0x00])
         XCTAssertEqual(info?.capacidades, [.nav, .status, .navText, .movil, .trazo, .movilAlCambiar, .cruces])
         XCTAssertEqual(info?.capacidades.contains(.gps), false)
+        // 0x01EF: el cuadro 0.3.0, también con GPS (v0.7)
+        let conGPS = DeviceInfo.decodificar([0x01, 0x01, 0xEF, 0x01, 0x00, 0x00, 0x03, 0x00])
+        XCTAssertEqual(conGPS?.capacidades, [.nav, .gps, .status, .navText, .movil, .trazo, .movilAlCambiar, .cruces])
     }
 
     func testDeviceInfoDescartaLoCorto() {
