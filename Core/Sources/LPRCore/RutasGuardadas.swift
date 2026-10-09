@@ -76,13 +76,14 @@ public enum RutasGuardadas {
     /// Maps puede dar el mismo sitio con unos metros de diferencia).
     public static let mismoSitio = 100.0
 
-    /// La lista con `nueva` la primera. Si ya estaba la misma ruta
-    /// (`esLaMisma`), la sustituye conservando su id y sumando una vez; si
-    /// pasan de `maximo`, se quitan las más antiguas.
+    /// La lista con `nueva` la primera. Si ya estaba (la misma entrada, con
+    /// su id, como al cargarla desde la lista; o la misma ruta, `esLaMisma`),
+    /// la sustituye conservando su id y sumando una vez; si pasan de
+    /// `maximo`, se quitan las más antiguas.
     public static func anadir(_ nueva: RutaGuardada, a lista: [RutaGuardada], maximo: Int = maximo) -> [RutaGuardada] {
         var nueva = nueva
         var resto = lista
-        if let i = resto.firstIndex(where: { $0.esLaMisma(que: nueva) }) {
+        if let i = resto.firstIndex(where: { $0.id == nueva.id }) ?? resto.firstIndex(where: { $0.esLaMisma(que: nueva) }) {
             nueva.id = resto[i].id
             nueva.veces = resto[i].veces + 1
             resto.remove(at: i)

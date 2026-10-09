@@ -20,7 +20,7 @@ struct RutasView: View {
                     ContentUnavailableView(
                         "Sin rutas todavía",
                         systemImage: "clock.arrow.circlepath",
-                        description: Text("Cada ruta que inicies se guarda aquí para volver a cargarla con un toque.")
+                        description: Text("Cada ruta se guarda aquí al pulsar «Iniciar», para volver a cargarla con un toque.")
                     )
                 } else {
                     List {

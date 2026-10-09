@@ -1287,3 +1287,17 @@ Ferrostar:
 - **Sin probar:** sin compilar en local; las pruebas de `RutasGuardadas`
   corren en el CI. La pestaña y la carga no tienen prueba automática ni están
   probadas en el iPhone.
+
+### 2026-10-10 · «Rutas»: se guarda al pulsar «Iniciar» (0.17.1)
+
+- **El autor:** «No se guardan las rutas, acabo de simular una y no me sale.
+  Deberian guardarse nada mas darle a iniciar, si se selecciona una ruta
+  desde la pestaña de rutas entonces lo que hay que hacer es volver a ponerla
+  arriba, no duplicarla».
+- En la 0.17.0 se guardaba al empezar a guiar y no con el simulador. Ahora se
+  guarda al pulsar «Iniciar» (`Navegacion.guardarRuta`), también simulando y
+  aunque luego no llegue a empezar.
+- La ruta cargada desde la lista se recuerda (`rutaCargada`, su id): al
+  iniciarla, esa entrada sube arriba con la fecha nueva y una vez más, aunque
+  se haya elegido otro tipo de ruta (`RutasGuardadas.anadir` busca primero
+  por id). Se olvida al elegir otro destino o cancelar.

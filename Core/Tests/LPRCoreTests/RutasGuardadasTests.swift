@@ -43,6 +43,19 @@ final class RutasGuardadasTests: XCTestCase {
         XCTAssertFalse(sinPeajes.esLaMisma(que: a))
     }
 
+    func testLaCargadaDeLaListaSubeAunqueCambieElTipo() {
+        // Cargada desde la pestaña «Rutas» (mismo id) e iniciada con otro tipo
+        // de ruta: sube arriba, no se duplica
+        let a = ruta("A")
+        let b = ruta("B", lat: 41.0)
+        var otraVez = ruta("A", tipo: "divertida", dia: 2)
+        otraVez.id = a.id
+        let lista = RutasGuardadas.anadir(otraVez, a: [b, a])
+        XCTAssertEqual(lista.map(\.nombre), ["A", "B"])
+        XCTAssertEqual(lista[0].tipo, "divertida")
+        XCTAssertEqual(lista[0].veces, 2)
+    }
+
     func testComoMuchoElMaximo() {
         var lista: [RutaGuardada] = []
         for i in 0..<5 {

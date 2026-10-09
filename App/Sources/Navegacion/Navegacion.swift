@@ -185,9 +185,12 @@ final class Navegacion: ObservableObject {
     /// trazo y los cruces se le pasan directamente desde aquí, también con la
     /// app en segundo plano
     weak var enlace: EnlaceBLE?
-    /// Las rutas hechas (pestaña «Rutas»): cada ruta que empieza a guiar (sin
-    /// simular) se guarda ahí.
+    /// Las rutas hechas (pestaña «Rutas»): cada ruta se guarda ahí al pulsar
+    /// «Iniciar», también con el simulador (a petición del autor).
     weak var historial: HistorialRutas?
+    /// La entrada de «Rutas» cargada (cargar): al iniciar, esa misma sube
+    /// arriba en vez de añadir otra. Se olvida al elegir otro destino.
+    private var rutaCargada: UUID?
     /// Escala del tramo del cuadro (TRAZO, §7 ter): el nivel y la maniobra para
     /// la que se eligió; con otra maniobra se elige de nuevo.
     private var nivelEscala: Int?
@@ -301,6 +304,7 @@ final class Navegacion: ObservableObject {
     func elegir(_ sugerencia: MKLocalSearchCompletion) {
         aviso = nil
         sugerencias = []
+        rutaCargada = nil
         Task {
             do {
                 let lugar = try await buscador.resolver(sugerencia)
@@ -324,6 +328,7 @@ final class Navegacion: ObservableObject {
             return
         }
         cancelarRuta()
+        rutaCargada = guardada.id
         // Sin destino, cambiarlas no pide rutas (preferenciaCambiada)
         if evitarPeajes != guardada.evitarPeajes { evitarPeajes = guardada.evitarPeajes }
         if evitarAutopistas != guardada.evitarAutopistas { evitarAutopistas = guardada.evitarAutopistas }
@@ -340,6 +345,7 @@ final class Navegacion: ObservableObject {
     }
 
     func cancelarRuta() {
+        rutaCargada = nil
         tareaVariantes?.cancel()
         tareaVariantes = nil
         olvidarDetalles()
@@ -597,6 +603,7 @@ final class Navegacion: ObservableObject {
         else { return }
         aviso = nil
         preparando = true
+        guardarRuta(variante)
         // Aquí, en primer plano (al pulsar «Iniciar»): Core Location no deja
         // activar el segundo plano desde él. Si no llega a empezar, se quita
         // (defer de iniciar(_:generacion:))
@@ -605,6 +612,22 @@ final class Navegacion: ObservableObject {
         tareaInicio = Task { [weak self] in
             await self?.iniciar(variante, generacion: esta)
         }
+    }
+
+    /// A la pestaña «Rutas», con lo necesario para cargarla otra vez, al
+    /// pulsar «Iniciar» (aunque luego no llegue a empezar). Si se cargó desde
+    /// la lista, la misma entrada sube arriba (rutaCargada).
+    private func guardarRuta(_ variante: VarianteRuta) {
+        guard let destino else { return }
+        let tipo = variante.tipos.contains(elegida) ? elegida : variante.tipo
+        historial?.guardar(RutaGuardada(
+            id: rutaCargada ?? UUID(),
+            nombre: destino.nombre, descripcion: destino.descripcion,
+            latitud: destino.latitud, longitud: destino.longitud, tipo: tipo.rawValue,
+            evitarPeajes: evitarPeajes, evitarAutopistas: evitarAutopistas, margen: margenExtra,
+            metros: variante.metros, segundos: variante.segundos, curvas: variante.curvas,
+            fecha: Date()
+        ))
     }
 
     /// Pide a Valhalla la ruta elegida en formato OSRM (la misma petición que la
@@ -673,18 +696,6 @@ final class Navegacion: ObservableObject {
             simulando = simulador != nil
             navegando = true
             llegada = false
-            // A la pestaña «Rutas», con lo necesario para cargarla otra vez
-            // (las simuladas, no: no son viajes)
-            if !simular, let destino {
-                let tipo = variante.tipos.contains(elegida) ? elegida : variante.tipo
-                historial?.guardar(RutaGuardada(
-                    nombre: destino.nombre, descripcion: destino.descripcion,
-                    latitud: destino.latitud, longitud: destino.longitud, tipo: tipo.rawValue,
-                    evitarPeajes: evitarPeajes, evitarAutopistas: evitarAutopistas, margen: margenExtra,
-                    metros: variante.metros, segundos: variante.segundos, curvas: variante.curvas,
-                    fecha: Date()
-                ))
-            }
             // El resumen del viaje cuenta desde aquí (NAV, v0.10)
             cuentakilometros = Cuentakilometros(inicio: Date())
             resumenLlegada = nil
