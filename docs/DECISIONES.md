@@ -241,6 +241,31 @@ final.
     `mountain.2.fill` (tierra).
   - No hay ningún símbolo de tierra ni de grava.
 
+### 2026-10-09 · Pantalla del mapa 0.7.2 (maqueta aprobada)
+
+- **Petición del autor,** con dos maquetas antes de programar; aprobó la
+  segunda con estos cambios:
+  - Primera fase solo por carretera: se quita el botón «Solo asfalto», que
+    queda siempre activado, y con él «Por tierra». El código de tierra se
+    conserva para más adelante.
+  - Mapa en el 60 % de arriba; el resto, sin desplazar, para las opciones o las
+    rutas y los botones. Sin destino, solo las opciones, ocupando todo el
+    hueco.
+  - Opciones como botones grandes («Evitar peajes», «Evitar autovías»). Al
+    activarse, el icono se tacha (una diagonal dibujada por la app, porque SF
+    Symbols no trae el euro ni la carretera tachados) y el botón pasa a un tono
+    claro.
+  - Con destino, una fila «Opciones de ruta» que abre las opciones en el sitio
+    de las rutas.
+  - La barra de tiempo extra se llama «Tiempo extra alternativas». Es más
+    corta, con botones − y + de 25 en 25 %, y sigue de 0 a 200 %.
+  - «La más divertida» pasa a llamarse «Mayor cantidad de curvas».
+  - Cancelar es una X roja e «Iniciar», un botón verde grande.
+  - Al elegir una ruta, el mapa se encuadra en ella entera, aunque se haya
+    movido.
+- **Decisión de la app** (no estaba en la maqueta): la simulación del recorrido
+  pasa a Ajustes (rueda dentada), porque no cabe en el panel.
+
 ### 2026-10-09 · Navegación: servidores, buscador y Ferrostar
 
 - **Origen:** el autor propuso usar lo mismo que la web
