@@ -446,8 +446,8 @@ final class EnlaceBLE: NSObject, ObservableObject {
             enviarTexto()
         }
         mantenimiento?.invalidate()
-        mantenimiento = Timer.scheduledTimer(withTimeInterval: TimeInterval(Protocolo.mantenimientoSegundos),
-                                             repeats: true) { [weak self] _ in
+        let temporizador = Timer(timeInterval: TimeInterval(Protocolo.mantenimientoSegundos),
+                                 repeats: true) { [weak self] _ in
             guard let self else { return }
             // El temporizador va en el bucle principal: ya está en el actor principal
             MainActor.assumeIsolated {
@@ -458,15 +458,36 @@ final class EnlaceBLE: NSObject, ObservableObject {
                 }
             }
         }
+        // En los modos comunes: en el modo por defecto no se dispara mientras se
+        // arrastra o se desplaza una lista, y con más de 5 s el cuadro daría el
+        // dato por caducado (lo vio la revisión)
+        RunLoop.main.add(temporizador, forMode: .common)
+        mantenimiento = temporizador
     }
 
     // MARK: - Texto de navegación (NAV_TEXT, PROTOCOLO.md §7 bis)
 
-    /// Texto para la cara de navegación del cuadro. Se manda al cambiar y,
-    /// mientras lo haya, cada 2 s; nil (o vacío) manda una vez un texto vacío
-    /// para borrarlo.
-    func ponerTexto(_ texto: String?) {
-        let nuevo = (texto?.isEmpty ?? true) ? nil : texto
+    /// El de la ruta iniciada y el de prueba de la pestaña Placa. Manda el de la
+    /// ruta si lo hay; si no, el de prueba.
+    private var textoNavegacion: String?
+    private var textoPrueba: String?
+
+    /// Texto de la navegación (lo pone ContentView): nil sin ruta.
+    func ponerTextoNavegacion(_ texto: String?) {
+        textoNavegacion = (texto?.isEmpty ?? true) ? nil : texto
+        aplicarTexto()
+    }
+
+    /// Texto de prueba (pestaña Placa): nil lo borra.
+    func ponerTextoPrueba(_ texto: String?) {
+        textoPrueba = (texto?.isEmpty ?? true) ? nil : texto
+        aplicarTexto()
+    }
+
+    /// Se manda al cambiar y, mientras lo haya, cada 2 s; si deja de haberlo,
+    /// una vez un texto vacío para borrarlo.
+    private func aplicarTexto() {
+        let nuevo = textoNavegacion ?? textoPrueba
         guard nuevo != textoCuadro else { return }
         textoCuadro = nuevo
         enviarTexto()
@@ -494,7 +515,9 @@ final class EnlaceBLE: NSObject, ObservableObject {
 
     private func enviarMovil() {
         leerBateria()
-        guard estado == .conectado, let periferico, let caracMovil else { return }
+        // Solo si la placa anuncia MOVIL (§4)
+        guard estado == .conectado, let periferico, let caracMovil,
+              info?.capacidades.contains(.movil) == true else { return }
         guard periferico.canSendWriteWithoutResponse else {
             // Se manda en cuanto iOS avise de que hay hueco (peripheralIsReady)
             envioPendiente = true

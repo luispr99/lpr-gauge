@@ -59,12 +59,12 @@ struct PlacaView: View {
                     TextField("Texto para la cara de navegación", text: $textoPrueba, axis: .vertical)
                         .lineLimit(1...4)
                     HStack {
-                        Button("Enviar") { enlace.ponerTexto(textoPrueba) }
+                        Button("Enviar") { enlace.ponerTextoPrueba(textoPrueba) }
                             .disabled(textoPrueba.isEmpty)
                         Spacer()
                         Button("Borrar", role: .destructive) {
                             textoPrueba = ""
-                            enlace.ponerTexto(nil)
+                            enlace.ponerTextoPrueba(nil)
                         }
                     }
                     .buttonStyle(.borderless)

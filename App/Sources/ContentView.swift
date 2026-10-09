@@ -15,7 +15,7 @@ struct ContentView: View {
                 .tabItem { Label("Placa", systemImage: "dot.radiowaves.left.and.right") }
         }
         .onChange(of: navegacion.textoCuadro) { _, texto in
-            enlace.ponerTexto(texto)
+            enlace.ponerTextoNavegacion(texto)
         }
     }
 }
