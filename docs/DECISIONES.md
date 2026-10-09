@@ -1301,3 +1301,34 @@ Ferrostar:
   iniciarla, esa entrada sube arriba con la fecha nueva y una vez más, aunque
   se haya elegido otro tipo de ruta (`RutasGuardadas.anadir` busca primero
   por id). Se olvida al elegir otro destino o cancelar.
+
+### 2026-10-10 · Rutas desde el cuadro y accesos directos (0.18.0)
+
+- **Peticiones del autor:** sin ruta, que la cara de navegación del cuadro
+  tenga «una lista con las ultimas rutas y sea tan sencillo como darle y que
+  empiece desde la pantalla», sin cambiar opciones pero con su información;
+  solo tres y sin desplazar («haré algo en el futuro»); con el peaje y la
+  autovía «como en la app», guardados con la ruta; y en la pestaña «Rutas» una
+  sección «Accesos directos» con tres huecos: esos son los del cuadro, y los
+  libres se llenan con las más recientes.
+- **Protocolo v0.13** (`PROTOCOLO.md` §7 quinquies y §9): `RUTAS` (app →
+  cuadro) con las tres y el estado de la orden; la orden (cuadro → app) va en
+  los bytes 8-11 de `STATUS`, que la app ya recibe por notificación, para no
+  añadir otra suscripción. Bit 12 de capacidades.
+- **La app** (`Navegacion.ordenDelCuadro`): con la app en primer plano, carga
+  la ruta como desde «Rutas» y pulsa «Iniciar» sola en cuanto hay propuestas;
+  contesta «calculando», y al empezar o al no poder. Si no está en primer
+  plano, contesta «abre la app»: con el permiso «Mientras se usa la app», el
+  guiado en segundo plano se activa en primer plano (`guiadoEnFondo`); la
+  opción de mantenerlo activo mientras se está conectado al cuadro queda
+  para probar más adelante (gasta batería y se ve el indicador de ubicación).
+- **Peaje y autopista:** se guardan con cada ruta (los tramo a tramo si ya
+  habían llegado; si no, los de las maniobras); las rutas guardadas antes se
+  leen con 0. La lista los enseña como la tarjeta de «Navegar».
+- **Accesos directos** (`RutasGuardadas.paraElCuadro`): tres huecos; el
+  cuadro enseña los fijados en su orden y, en los libres, las más recientes
+  que no sean ya acceso directo. Los fijados no se quitan por viejos al
+  pasar de 30.
+- **Sin probar:** sin compilar en local; las pruebas de `Core` corren en el
+  CI. La pestaña, la orden y el inicio automático no tienen prueba automática
+  ni están probados en el iPhone ni con el cuadro.

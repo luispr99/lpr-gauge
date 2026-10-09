@@ -1,7 +1,7 @@
 # Vectores de prueba del protocolo
 
 Ejemplos de mensajes con sus bytes exactos, en hexadecimal y en el orden en que
-viajan. Salen de [PROTOCOLO.md](../PROTOCOLO.md) (v0.12). Las pruebas de `Core`
+viajan. Salen de [PROTOCOLO.md](../PROTOCOLO.md) (v0.13). Las pruebas de `Core`
 (`Core/Tests/LPRCoreTests/MensajesTests.swift`) comprueban estos mismos bytes; el
 firmware y la app de Android deberán pasar los mismos. Si cambia un vector,
 cambian a la vez el documento, las pruebas y este fichero.
@@ -35,6 +35,28 @@ cambian a la vez el documento, las pruebas y este fichero.
 - Se descarta `01 00 00` (corto) y cualquier mensaje con versión distinta de 1.
 - Hasta la v0.6, el caso de 8 bytes era «v0.4 con un byte de más» y el último
   byte se ignoraba; ahora es el eco de `CRUCES`.
+- v0.13, con la orden de ruta (12 bytes): `01 10 00 00 03 04 05 06 05 01 09 02`
+  es eco de `NAV` 16, de `MOVIL` 3, de `NAV_TEXT` 4, de `TRAZO` 5 y de `CRUCES`
+  6, y la orden 5: empezar (1) la ruta 2 (la tercera) del `RUTAS` 9. Con menos
+  de 12 bytes, sin orden; un código que no se conoce (por ejemplo, 7), sin
+  código.
+
+## `RUTAS` (v0.13)
+
+Cabecera: versión, secuencia, estado de la orden, eco de la orden y número de
+rutas. Por ruta: tipo, distancia (decenas de metros), tiempo (minutos),
+curvas, peaje y autopista (decenas de metros), largo del nombre y nombre.
+
+| Caso | Bytes |
+|---|---|
+| Secuencia 7, calculando (1), eco 3, dos rutas; la primera: de curvas (1), 58 km (5800 = `A8 16`), 65 min, 112 curvas, sin peaje, 12,34 km de autopista (1234 = `D2 04`), «Puerto» | `01 07 01 03 02 01 A8 16 41 00 70 00 00 00 D2 04 06 50 75 65 72 74 6F` y la segunda |
+| Una ruta sin datos, «X» | `01 02 00 00 01 00 FF FF FF FF FF FF FF FF FF FF 01 58` |
+
+- Los nombres, como mucho de 40 bytes, se cortan sin partir un carácter, todos
+  al mismo largo, lo justo para caber en lo que admita la conexión; si sin
+  nombre tampoco caben, van menos rutas.
+- Se descarta un mensaje corto, de otra versión, con más de tres rutas, con una
+  ruta cortada o con un nombre que no es UTF-8.
 
 ## `NAV`
 
@@ -211,5 +233,7 @@ moto (0, 0) y los de delante.
 | Cuadro con `NAV`, `GPS` y `CRUCES` | `01 01 EF 01 00 00 03 00` | 1 | `NAV` + `GPS` + `STATUS` + `NAV_TEXT` + `MOVIL` + `TRAZO` + MOVIL al cambiar + `CRUCES` (0x01EF) | sin límite | 0.3.0 |
 | Cuadro con todo, también los anillos (v0.8) | `01 01 EF 03 00 00 04 00` | 1 | las de 0.3.0 + anillos (0x03EF) | sin límite | 0.4.0 |
 | Cuadro con todo, también el movimiento (v0.9) | `01 01 EF 07 00 00 05 00` | 1 | las de 0.4.0 + movimiento (0x07EF) | sin límite | 0.5.0 |
+| Cuadro con los carriles (v0.12) | `01 01 EF 0F 00 00 06 00` | 1 | las de 0.5.0 + carriles (0x0FEF) | sin límite | 0.6.0 |
+| Cuadro con las rutas (v0.13) | `01 01 EF 1F 00 00 07 00` | 1 | las de 0.6.0 + rutas (0x1FEF) | sin límite | 0.7.0 |
 
 - Se descarta cualquier mensaje de menos de 8 bytes.

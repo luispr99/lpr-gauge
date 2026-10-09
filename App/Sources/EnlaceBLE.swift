@@ -75,6 +75,7 @@ final class EnlaceBLE: NSObject, ObservableObject {
     private var caracNav: CBCharacteristic?
     private var caracCruces: CBCharacteristic?
     private var caracGPS: CBCharacteristic?
+    private var caracRutas: CBCharacteristic?
     private var secuencia = Secuencia()
     /// Cada característica lleva su secuencia (PROTOCOLO.md §3).
     private var secuenciaTexto = Secuencia()
@@ -82,7 +83,20 @@ final class EnlaceBLE: NSObject, ObservableObject {
     private var secuenciaNav = Secuencia()
     private var secuenciaCruces = Secuencia()
     private var secuenciaGPS = Secuencia()
+    private var secuenciaRutas = Secuencia()
     private var textoPendiente = false
+    private var rutasPendiente = false
+    /// Las rutas que enseña el cuadro (v0.13, §7 quinquies) y el estado de su
+    /// orden; las listas mandadas, por su secuencia, para saber cuál tocó.
+    private var rutasCuadro: [RutaGuardada] = []
+    private var estadoOrden = EstadoOrdenRuta.ninguna
+    private var ecoOrden: UInt8 = 0
+    private var listasMandadas: [UInt8: [RutaGuardada]] = [:]
+    /// El contador de la última orden atendida (STATUS, byte 8).
+    private var ultimaOrden: UInt8 = 0
+    /// Lo llama con cada orden de ruta nueva del cuadro y la ruta a la que se
+    /// refiere (nil si su lista ya no se conoce).
+    var alRecibirOrden: (@MainActor (OrdenRuta, RutaGuardada?) -> Void)?
     private var trazoPendiente = false
     private var navPendiente = false
     private var crucesPendiente = false
@@ -142,6 +156,7 @@ final class EnlaceBLE: NSObject, ObservableObject {
     private let uuidNav = CBUUID(string: Protocolo.UUIDs.nav)
     private let uuidCruces = CBUUID(string: Protocolo.UUIDs.cruces)
     private let uuidGPS = CBUUID(string: Protocolo.UUIDs.gps)
+    private let uuidRutas = CBUUID(string: Protocolo.UUIDs.rutas)
 
     override init() {
         super.init()
@@ -355,6 +370,12 @@ final class EnlaceBLE: NSObject, ObservableObject {
         caracNav = nil
         caracCruces = nil
         caracGPS = nil
+        caracRutas = nil
+        rutasPendiente = false
+        estadoOrden = .ninguna
+        ecoOrden = 0
+        listasMandadas.removeAll()
+        ultimaOrden = 0
         info = nil
         mantenimiento?.invalidate()
         mantenimiento = nil
@@ -401,7 +422,7 @@ final class EnlaceBLE: NSObject, ObservableObject {
             return
         }
         periferico.discoverCharacteristics([uuidInfo, uuidStatus, uuidMovil, uuidTexto, uuidTrazo, uuidNav, uuidCruces,
-                                            uuidGPS],
+                                            uuidGPS, uuidRutas],
                                            for: servicio)
     }
 
@@ -421,6 +442,7 @@ final class EnlaceBLE: NSObject, ObservableObject {
             case uuidNav: caracNav = caracteristica
             case uuidCruces: caracCruces = caracteristica
             case uuidGPS: caracGPS = caracteristica
+            case uuidRutas: caracRutas = caracteristica
             default: break
             }
         }
@@ -484,6 +506,14 @@ final class EnlaceBLE: NSObject, ObservableObject {
             }
             if let eco = status.ecoCruces {
                 ecoCruces = eco
+            }
+            // Orden de ruta (v0.13): cada contador nuevo, una vez
+            if admiteRutas, let orden = status.orden, orden.contador != 0, orden.contador != ultimaOrden {
+                ultimaOrden = orden.contador
+                let lista = listasMandadas[orden.lista]
+                let ruta = lista.flatMap { Int(orden.ruta) < $0.count ? $0[Int(orden.ruta)] : nil }
+                anotar("Orden de ruta del cuadro: \(orden.codigo == .cancelar ? "cancelar" : "empezar") la \(Int(orden.ruta) + 1)ª")
+                alRecibirOrden?(orden, ruta)
             }
             // El eco de NAV va siempre (byte 1); solo vale si la placa lo admite.
             // El de GPS, igual (byte 2)
@@ -634,6 +664,51 @@ final class EnlaceBLE: NSObject, ObservableObject {
         if posicionGPS != nil, todo || pasado(ultimoGPS, Self.repeticion) || (gpsNuevo && pasado(ultimoGPS, Self.cambioMinimo)) {
             enviarGPS()
         }
+        // RUTAS (v0.13): al conectar y con el reenvío; si no, al cambiar
+        if todo {
+            enviarRutas()
+        }
+    }
+
+    // MARK: - Rutas del cuadro (PROTOCOLO.md §7 quinquies, v0.13)
+
+    /// Si la placa enseña las últimas rutas y pide empezar una (bit 12).
+    var admiteRutas: Bool {
+        estado == .conectado && caracRutas != nil && caracStatus != nil
+            && info?.capacidades.contains(.rutas) == true
+    }
+
+    /// Las rutas que enseña el cuadro (HistorialRutas.paraElCuadro).
+    func ponerRutas(_ rutas: [RutaGuardada]) {
+        rutasCuadro = Array(rutas.prefix(MensajeRutas.maximoRutas))
+        enviarRutas()
+    }
+
+    /// En qué está la orden `eco` del cuadro (Navegacion).
+    func ponerEstadoOrden(_ estado: EstadoOrdenRuta, eco: UInt8) {
+        estadoOrden = estado
+        ecoOrden = eco
+        enviarRutas()
+    }
+
+    private func enviarRutas() {
+        guard admiteRutas, let periferico, let caracRutas else { return }
+        guard periferico.canSendWriteWithoutResponse else {
+            rutasPendiente = true
+            return
+        }
+        rutasPendiente = false
+        let numero = secuenciaRutas.siguiente()
+        let mensaje = MensajeRutas(secuencia: numero, estado: estadoOrden, ecoOrden: ecoOrden,
+                                   rutas: rutasCuadro.map(RutaCuadro.init))
+        let bytes = mensaje.codificar(maximo: periferico.maximumWriteValueLength(for: .withoutResponse))
+        // Las de esta secuencia, para la orden; solo las últimas, que son las
+        // que puede estar enseñando el cuadro
+        listasMandadas[numero] = Array(rutasCuadro.prefix(Int(bytes[4])))
+        if listasMandadas.count > 16 {
+            listasMandadas = listasMandadas.filter { UInt8(truncatingIfNeeded: numero &- $0.key) < 16 }
+        }
+        periferico.writeValue(Data(bytes), for: caracRutas, type: .withoutResponse)
     }
 
     // MARK: - GPS (PROTOCOLO.md §6, v0.7)
@@ -1067,6 +1142,9 @@ final class EnlaceBLE: NSObject, ObservableObject {
         }
         if trazoPendiente {
             enviarTrazo()
+        }
+        if rutasPendiente {
+            enviarRutas()
         }
     }
 

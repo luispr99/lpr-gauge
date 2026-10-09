@@ -34,6 +34,11 @@ struct ContentView: View {
         .onAppear {
             navegacion.enlace = enlace
             navegacion.historial = historial
+            // Las tres del cuadro (v0.13): al empezar y cada vez que cambian;
+            // y sus órdenes, a la navegación
+            historial.alCambiar = { rutas in enlace.ponerRutas(rutas) }
+            enlace.ponerRutas(historial.paraElCuadro)
+            enlace.alRecibirOrden = { orden, ruta in navegacion.ordenDelCuadro(orden, ruta: ruta) }
         }
     }
 }

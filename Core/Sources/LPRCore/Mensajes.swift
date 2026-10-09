@@ -567,9 +567,12 @@ public struct MensajeStatus: Equatable {
     public var ecoTrazo: UInt8?
     /// nil si el dispositivo es anterior a la v0.6 (STATUS de menos de 8 bytes).
     public var ecoCruces: UInt8?
+    /// La orden de ruta (bytes 8-11, v0.13); nil con menos de 12 bytes.
+    public var orden: OrdenRuta?
 
     public init(ecoNav: UInt8, ecoGPS: UInt8, pideReenvio: Bool, ecoMovil: UInt8?,
-                ecoNavText: UInt8? = nil, ecoTrazo: UInt8? = nil, ecoCruces: UInt8? = nil) {
+                ecoNavText: UInt8? = nil, ecoTrazo: UInt8? = nil, ecoCruces: UInt8? = nil,
+                orden: OrdenRuta? = nil) {
         self.ecoNav = ecoNav
         self.ecoGPS = ecoGPS
         self.pideReenvio = pideReenvio
@@ -577,6 +580,7 @@ public struct MensajeStatus: Equatable {
         self.ecoNavText = ecoMovil == nil ? nil : ecoNavText
         self.ecoTrazo = self.ecoNavText == nil ? nil : ecoTrazo
         self.ecoCruces = self.ecoTrazo == nil ? nil : ecoCruces
+        self.orden = self.ecoCruces == nil ? nil : orden
     }
 
     public func codificar() -> [UInt8] {
@@ -587,7 +591,12 @@ public struct MensajeStatus: Equatable {
                 bytes.append(ecoNavText)
                 if let ecoTrazo {
                     bytes.append(ecoTrazo)
-                    if let ecoCruces { bytes.append(ecoCruces) }
+                    if let ecoCruces {
+                        bytes.append(ecoCruces)
+                        if let orden {
+                            bytes += [orden.contador, orden.codigo?.rawValue ?? 0, orden.lista, orden.ruta]
+                        }
+                    }
                 }
             }
         }
@@ -603,7 +612,11 @@ public struct MensajeStatus: Equatable {
             ecoMovil: bytes.count >= 5 ? bytes[4] : nil,
             ecoNavText: bytes.count >= 6 ? bytes[5] : nil,
             ecoTrazo: bytes.count >= 7 ? bytes[6] : nil,
-            ecoCruces: bytes.count >= 8 ? bytes[7] : nil
+            ecoCruces: bytes.count >= 8 ? bytes[7] : nil,
+            orden: bytes.count >= 12
+                ? OrdenRuta(contador: bytes[8], codigo: OrdenRuta.Codigo(rawValue: bytes[9]), lista: bytes[10],
+                            ruta: bytes[11])
+                : nil
         )
     }
 }
@@ -938,6 +951,9 @@ public struct Capacidades: OptionSet, Equatable {
     public static let movimiento = Capacidades(rawValue: 1 << 10)
     /// El dispositivo acepta NAV con los carriles y los dibuja (v0.12, §5).
     public static let carriles = Capacidades(rawValue: 1 << 11)
+    /// El dispositivo enseña las últimas rutas de RUTAS y pide empezar una
+    /// con STATUS (v0.13, §7 quinquies y §9).
+    public static let rutas = Capacidades(rawValue: 1 << 12)
 }
 
 public struct DeviceInfo: Equatable {

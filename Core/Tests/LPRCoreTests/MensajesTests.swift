@@ -355,6 +355,22 @@ final class MensajesTests: XCTestCase {
         XCTAssertEqual(DireccionesCarril(osrm: "slight left").rawValue, 0x20)
     }
 
+    func testStatusConOrdenDeRuta() {
+        // v0.13: los 8 bytes de la v0.6 y la orden: contador 5, empezar, lista
+        // 9, ruta 2
+        let bytes: [UInt8] = [0x01, 0x10, 0x00, 0x00, 0x03, 0x04, 0x05, 0x06, 0x05, 0x01, 0x09, 0x02]
+        let status = MensajeStatus.decodificar(bytes)
+        XCTAssertEqual(status?.orden, OrdenRuta(contador: 5, codigo: .empezar, lista: 9, ruta: 2))
+        XCTAssertEqual(status?.codificar(), bytes)
+        XCTAssertEqual(status?.ecoCruces, 6)
+        // Con menos de 12, sin orden; un código que no se conoce, nil
+        XCTAssertNil(MensajeStatus.decodificar(Array(bytes.prefix(11)))?.orden)
+        var raro = bytes
+        raro[9] = 7
+        XCTAssertNil(MensajeStatus.decodificar(raro)?.orden?.codigo)
+        XCTAssertEqual(MensajeStatus.decodificar(raro)?.orden?.contador, 5)
+    }
+
     func testNavDecodificaElFormatoCorto() {
         // 9 bytes (antes de la v0.6): recto a 100 m; lo de la v0.6, desconocido
         XCTAssertEqual(MensajeNav.decodificar([0x01, 0x05, 0x01, 0x01, 0x00, 0x64, 0x00, 0x00, 0x00]),

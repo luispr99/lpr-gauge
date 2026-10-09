@@ -17,6 +17,7 @@ public enum Protocolo {
         public static let movil      = "f4640008-813a-45b8-8ca8-f5f9e18c21d1"
         public static let trazo      = "f4640009-813a-45b8-8ca8-f5f9e18c21d1"
         public static let cruces     = "f464000a-813a-45b8-8ca8-f5f9e18c21d1"
+        public static let rutas      = "f464000b-813a-45b8-8ca8-f5f9e18c21d1"
     }
 
     /// Sin recibir datos durante este tiempo, el cuadro muestra el aviso (sección 10).

@@ -64,6 +64,32 @@ final class RutasGuardadasTests: XCTestCase {
         XCTAssertEqual(lista.map(\.nombre), ["R4", "R3", "R2"])
     }
 
+    func testLosAccesosDirectosNoSeQuitanPorViejos() {
+        var lista: [RutaGuardada] = []
+        for i in 0..<3 {
+            lista = RutasGuardadas.anadir(ruta("R(i)", lat: 40.0 + Double(i)), a: lista, maximo: 3)
+        }
+        // R0 es la más antigua, pero es acceso directo: sale R1
+        let fijada: Set = [lista[2].id]
+        lista = RutasGuardadas.anadir(ruta("R3", lat: 43.0), a: lista, maximo: 3, conservar: fijada)
+        XCTAssertEqual(lista.map(.nombre), ["R3", "R2", "R0"])
+    }
+
+    func testParaElCuadro() {
+        let lista = (0..<5).map { ruta("R($0)", lat: 40.0 + Double($0)) }   // R0, la más reciente
+        // Sin accesos directos, las tres más recientes
+        XCTAssertEqual(RutasGuardadas.paraElCuadro(lista, accesos: [nil, nil, nil]).map(.nombre), ["R0", "R1", "R2"])
+        // Uno (R4) en el segundo hueco: primero él y luego las dos más recientes
+        XCTAssertEqual(RutasGuardadas.paraElCuadro(lista, accesos: [nil, lista[4].id, nil]).map(.nombre),
+                       ["R4", "R0", "R1"])
+        // Dos, uno de ellos reciente: no se repite
+        XCTAssertEqual(RutasGuardadas.paraElCuadro(lista, accesos: [lista[3].id, lista[0].id, nil]).map(.nombre),
+                       ["R3", "R0", "R1"])
+        // Uno que ya no está, como vacío; y con menos de tres rutas, las que haya
+        XCTAssertEqual(RutasGuardadas.paraElCuadro(lista, accesos: [UUID(), nil, nil]).map(.nombre), ["R0", "R1", "R2"])
+        XCTAssertEqual(RutasGuardadas.paraElCuadro(Array(lista.prefix(1)), accesos: []).map(.nombre), ["R0"])
+    }
+
     func testSeGuardaYSeLee() throws {
         let lista = [ruta("A"), ruta("B", lat: 41.0, tipo: "divertida")]
         let datos = try RutasGuardadas.codificar(lista)
