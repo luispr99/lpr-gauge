@@ -2,18 +2,24 @@ import MapKit
 import SwiftUI
 import LPRCore
 
-/// Mapa con la posición y un buscador (Apple Maps). Con los botones de
-/// preferencias (peajes, autopistas, asfalto) y la barra de tiempo extra; al
-/// elegir un destino se previsualizan la ruta más rápida, la más divertida y,
-/// sin «Solo asfalto», la de tierra; al iniciar, el guiado: cartel con la
-/// flecha y los metros, mapa que sigue la posición y lo que falta.
+/// Mapa con la posición y un buscador (Apple Maps), en el 60 % de arriba; en
+/// el resto, las opciones de ruta (peajes, autovías y tiempo extra) y, con un
+/// destino, la ruta más rápida y la de más curvas con los botones de cancelar e
+/// iniciar (maqueta aprobada por el autor el 2026-10-09). Al iniciar, el
+/// guiado: cartel con la flecha y los metros, mapa que sigue la posición y lo
+/// que falta.
 struct NavegacionView: View {
     @ObservedObject var navegacion: Navegacion
     @State private var mostrarAjustes = false
     @State private var camara: MapCameraPosition = .userLocation(fallback: .automatic)
     /// Simplificación de las rayas para el zoom actual (TrazoMapa).
     @State private var nivelTrazo: Int?
+    /// Con un destino, las opciones ocupan el sitio de las rutas.
+    @State private var mostrarOpciones = false
     @FocusState private var escribiendo: Bool
+
+    /// Parte de la pantalla para el mapa; el resto, para el panel.
+    private let partePantallaMapa: CGFloat = 0.6
 
     var body: some View {
         NavigationStack {
@@ -31,46 +37,59 @@ struct NavegacionView: View {
                     Button {
                         mostrarAjustes = true
                     } label: {
-                        Label("Servidor de rutas", systemImage: "gearshape")
+                        Label("Ajustes", systemImage: "gearshape")
                     }
                 }
             }
             .sheet(isPresented: $mostrarAjustes) {
-                AjustesServidoresView()
+                AjustesView(navegacion: navegacion)
             }
         }
     }
 
-    // MARK: - Exploración: mapa, búsqueda y variantes
+    // MARK: - Exploración: mapa, búsqueda y rutas
 
     private var exploracion: some View {
         GeometryReader { geometria in
             let anchura = geometria.size.width
-            let altoPanel = geometria.size.height * 0.7
-            mapaExploracion
-                .onMapCameraChange(frequency: .onEnd) { contexto in
-                    let nivel = TrazoMapa.nivel(
-                        metrosPorPunto: TrazoMapa.metrosPorPunto(region: contexto.region, anchura: anchura)
-                    )
-                    if nivel != nivelTrazo {
-                        nivelTrazo = nivel
+            let alto = geometria.size.height
+            VStack(spacing: 0) {
+                mapaExploracion
+                    .onMapCameraChange(frequency: .onEnd) { contexto in
+                        let nivel = TrazoMapa.nivel(
+                            metrosPorPunto: TrazoMapa.metrosPorPunto(region: contexto.region, anchura: anchura)
+                        )
+                        if nivel != nivelTrazo {
+                            nivelTrazo = nivel
+                        }
                     }
-                }
-                .safeAreaInset(edge: .top) {
-                    barraBusqueda
-                }
-                .safeAreaInset(edge: .bottom) {
-                    // Mientras se escribe, sitio para las sugerencias
-                    if !escribiendo {
-                        panelInferior(altoMaximo: altoPanel)
+                    .safeAreaInset(edge: .top) {
+                        barraBusqueda
                     }
+                    .overlay(alignment: .bottom) {
+                        avisosExploracion
+                            .padding(8)
+                    }
+                    // Mientras se escribe, todo para el mapa y las sugerencias
+                    .frame(height: escribiendo ? alto : alto * partePantallaMapa)
+                if !escribiendo {
+                    panelInferior
+                        .frame(height: alto * (1 - partePantallaMapa))
                 }
+            }
         }
         .onChange(of: navegacion.consulta) { _, _ in
             navegacion.consultaCambiada()
         }
+        // Al terminar un cálculo, la ruta elegida entera. Las opciones siguen
+        // abiertas si lo estaban, por si se cambia algo más
         .onChange(of: navegacion.calculos) { _, _ in
-            encuadrarVariantes()
+            encuadrarElegida()
+        }
+        .onChange(of: navegacion.destino == nil) { _, sinDestino in
+            if sinDestino {
+                mostrarOpciones = false
+            }
         }
     }
 
@@ -162,201 +181,186 @@ struct NavegacionView: View {
         .padding(.top, 8)
     }
 
-    /// Panel de abajo, de como mucho `altoMaximo`. Arriba, fijas, las
-    /// preferencias y la barra (fuera de la parte que se desplaza, para que
-    /// mover la barra no la vuelva a crear y corte el gesto); en medio, lo que
-    /// se desplaza si no cabe; abajo, fijo, el pie.
-    private func panelInferior(altoMaximo: CGFloat) -> some View {
-        let limite = AltoMaximo(alto: altoMaximo)
-        return limite {
-            VStack(spacing: 0) {
-                VStack(alignment: .leading, spacing: 10) {
-                    preferenciasRuta
-                    barraMargen
-                        .disabled(navegacion.preparando)
-                }
-                .padding([.horizontal, .top])
-                ViewThatFits(in: .vertical) {
-                    contenidoPanel
-                    ScrollView {
-                        contenidoPanel
-                    }
-                }
-                piePanel
-            }
-            .frame(maxWidth: .infinity)
-        }
-        .background(.regularMaterial)
-    }
+    // MARK: - Panel de abajo
 
-    private var contenidoPanel: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if navegacion.calculando {
-                HStack {
-                    ProgressView()
-                    Text("Calculando las rutas…")
+    /// Sin destino, solo las opciones de ruta, ocupando todo el panel. Con
+    /// destino, la fila «Opciones de ruta», las rutas (o las opciones, si se
+    /// abren, en el mismo sitio) y los botones de cancelar e iniciar.
+    private var panelInferior: some View {
+        VStack(spacing: 8) {
+            if navegacion.destino == nil {
+                opcionesRuta
+            } else {
+                filaOpciones
+                if mostrarOpciones {
+                    opcionesRuta
+                } else {
+                    rutasPropuestas
                 }
-            }
-
-            if !navegacion.variantes.isEmpty {
-                if let destino = navegacion.destino {
-                    Text(verbatim: destino.nombre)
-                        .font(.headline)
-                        .lineLimit(1)
-                }
-                // Mientras se prepara la navegación, la elegida no se cambia
-                VStack(spacing: 10) {
-                    ForEach(navegacion.variantes) { variante in
-                        tarjetaVariante(variante)
-                    }
-                }
-                .disabled(navegacion.preparando)
-                if navegacion.sinRutaDeAsfalto {
-                    avisoRutas("No hay ninguna ruta solo por asfalto: todas llevan algún tramo sin asfaltar.")
-                }
-                if navegacion.sinRutaPorTierra {
-                    avisoRutas("Ninguna ruta por tierra cabe en el margen de tiempo. Prueba a subirlo.")
-                }
-                Text(verbatim: notaVariantes)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-
-            if !navegacion.variantes.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Toggle("Simular el recorrido", isOn: $navegacion.simular)
-                    if navegacion.simular {
-                        Picker("Velocidad", selection: $navegacion.factorSimulacion) {
-                            Text(verbatim: "36 km/h").tag(UInt64(1))
-                            Text(verbatim: "72 km/h").tag(UInt64(2))
-                            Text(verbatim: "108 km/h").tag(UInt64(3))
-                        }
-                        .pickerStyle(.segmented)
-                    }
-                }
-                .disabled(navegacion.preparando)
-            } else if !navegacion.calculando {
-                HStack {
-                    Label(navegacion.posicionActual == nil
-                              ? LocalizedStringKey("Esperando señal GPS…")
-                              : LocalizedStringKey("GPS con señal"),
-                          systemImage: "location")
-                    Spacer()
-                    Text(verbatim: "Altitud \(textoAltitud)")
-                }
-                .font(.footnote)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal)
-        .padding(.vertical, 8)
-    }
-
-    /// Lo que tiene que verse siempre: el aviso, los botones y la atribución.
-    private var piePanel: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if let aviso = navegacion.aviso {
-                Text(verbatim: aviso)
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-            }
-            if !navegacion.variantes.isEmpty {
-                HStack {
-                    Button("Cancelar") {
-                        navegacion.cancelarRuta()
-                        camara = .userLocation(fallback: .automatic)
-                    }
-                    .buttonStyle(.bordered)
-                    Button {
-                        navegacion.iniciar()
-                    } label: {
-                        HStack {
-                            if navegacion.preparando {
-                                ProgressView()
-                            }
-                            Text(navegacion.preparando ? "Preparando…" : "Iniciar")
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(navegacion.preparando)
-                }
-                .controlSize(.large)
+                botonesRuta
             }
             atribucion
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding([.horizontal, .bottom])
-        .padding(.top, 8)
+        .padding(.horizontal)
+        .padding(.top, 10)
+        .padding(.bottom, 6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(.regularMaterial)
     }
 
-    private func encuadrarVariantes() {
-        let puntos = navegacion.variantes.flatMap(\.geometria)
-        guard puntos.count > 1 else { return }
-        let rect = MKPolyline(coordinates: puntos, count: puntos.count).boundingMapRect
-        let margen = max(rect.size.width, rect.size.height) * 0.2
-        withAnimation {
-            camara = .rect(rect.insetBy(dx: -margen, dy: -margen))
+    /// Abre y cierra las opciones; cerrada, resume las activas y el margen.
+    private var filaOpciones: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                mostrarOpciones.toggle()
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "slider.horizontal.3")
+                Text("Opciones de ruta")
+                if !mostrarOpciones {
+                    if navegacion.evitarPeajes {
+                        IconoTachable(nombre: "eurosign.circle", tachado: true)
+                            .foregroundStyle(Color.accentColor)
+                    }
+                    if navegacion.evitarAutopistas {
+                        IconoTachable(nombre: "road.lanes", tachado: true)
+                            .foregroundStyle(Color.accentColor)
+                    }
+                }
+                Spacer()
+                if mostrarOpciones {
+                    Text("Listo")
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Color.accentColor)
+                } else {
+                    Text(verbatim: textoMargen)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+                Image(systemName: mostrarOpciones ? "chevron.up" : "chevron.down")
+                    .foregroundStyle(mostrarOpciones ? Color.accentColor : Color.secondary)
+            }
+            .font(.subheadline)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(
+                        mostrarOpciones ? Color.accentColor : Color.secondary.opacity(0.35),
+                        lineWidth: mostrarOpciones ? 1.5 : 0.5
+                    )
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 10))
         }
+        .buttonStyle(.plain)
+        .disabled(navegacion.preparando)
     }
 
-    /// Botones de preferencias de ruta. Al tocarlos con un destino elegido se
-    /// vuelven a calcular las rutas.
-    private var preferenciasRuta: some View {
-        HStack(spacing: 8) {
-            botonPreferencia("Evitar peajes", icono: "eurosign.circle.fill", activa: $navegacion.evitarPeajes)
-            botonPreferencia("Evitar autopistas", icono: "car.rear.road.lane", activa: $navegacion.evitarAutopistas)
-            botonPreferencia("Solo asfalto", icono: "road.lanes", activa: $navegacion.soloAsfalto)
+    /// Botones de peajes y autovías y la barra de tiempo extra, ocupando todo el
+    /// sitio que haya. Al cambiar algo con un destino elegido se vuelven a
+    /// calcular las rutas.
+    private var opcionesRuta: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                botonOpcion("Evitar peajes", icono: "eurosign.circle", activa: $navegacion.evitarPeajes)
+                botonOpcion("Evitar autovías", icono: "road.lanes", activa: $navegacion.evitarAutopistas)
+            }
+            .frame(maxHeight: .infinity)
+            barraMargen
         }
+        .frame(maxHeight: .infinity)
     }
 
-    private func botonPreferencia(_ titulo: LocalizedStringKey, icono: String, activa: Binding<Bool>) -> some View {
-        let marcado = activa.wrappedValue
+    /// Activada: el icono se tacha y el botón pasa a un tono claro del color de
+    /// la app.
+    private func botonOpcion(_ titulo: LocalizedStringKey, icono: String, activa: Binding<Bool>) -> some View {
+        let marcada = activa.wrappedValue
         return Button {
             activa.wrappedValue.toggle()
         } label: {
-            VStack(spacing: 6) {
-                Image(systemName: icono)
-                    .font(.title2)
+            VStack(spacing: 8) {
+                IconoTachable(nombre: icono, tachado: marcada)
+                    .font(.system(size: 36))
                 Text(titulo)
-                    .font(.footnote.weight(.semibold))
+                    .font(.subheadline.weight(.semibold))
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
                     .minimumScaleFactor(0.85)
             }
-            .frame(maxWidth: .infinity, minHeight: 64)
-            .padding(.vertical, 8)
-            .padding(.horizontal, 4)
-            .foregroundStyle(marcado ? Color.white : Color.primary)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(8)
+            .foregroundStyle(marcada ? Color.accentColor : Color.primary)
             .background(
-                marcado ? Color.accentColor : Color.secondary.opacity(0.15),
+                marcada ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.12),
                 in: RoundedRectangle(cornerRadius: 14)
             )
-            .overlay(alignment: .topTrailing) {
-                if marcado {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.caption)
-                        .padding(6)
-                }
-            }
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .strokeBorder(marcada ? Color.accentColor : Color.clear, lineWidth: 1.5)
+            )
             .contentShape(RoundedRectangle(cornerRadius: 14))
         }
         .buttonStyle(.plain)
-        .accessibilityAddTraits(marcado ? .isSelected : [])
+        .accessibilityAddTraits(marcada ? .isSelected : [])
+        .disabled(navegacion.preparando)
     }
 
-    /// Barra del tiempo extra admitido para la más divertida y la de tierra.
+    /// Barra del tiempo extra admitido para la ruta con más curvas, de 0 a 200 %.
+    /// Más corta que el panel, con − y + de 25 en 25 % a los lados.
     private var barraMargen: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(spacing: 6) {
             HStack {
-                Label("Tiempo extra para divertida y tierra", systemImage: "timer")
-                    .font(.footnote)
+                Label("Tiempo extra alternativas", systemImage: "clock")
                 Spacer()
-                Text(verbatim: "+\(Int((navegacion.margenExtra * 100).rounded())) %")
-                    .font(.footnote.weight(.semibold))
+                Text(verbatim: textoMargen)
+                    .fontWeight(.semibold)
                     .monospacedDigit()
             }
-            Slider(value: $navegacion.margenExtra, in: 0...2, step: 0.05)
+            .font(.subheadline)
+            HStack(spacing: 14) {
+                botonPaso(icono: "minus", pasos: -1)
+                Slider(value: $navegacion.margenExtra, in: 0...2, step: 0.05)
+                botonPaso(icono: "plus", pasos: 1)
+            }
+        }
+        .disabled(navegacion.preparando)
+    }
+
+    private func botonPaso(icono: String, pasos: Int) -> some View {
+        Button {
+            navegacion.cambiarMargen(pasos: pasos)
+        } label: {
+            Image(systemName: icono)
+                .font(.body.weight(.semibold))
+                .frame(width: 38, height: 38)
+                .background(Color.secondary.opacity(0.15), in: Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text(pasos > 0 ? "Más tiempo extra" : "Menos tiempo extra"))
+    }
+
+    private var textoMargen: String {
+        "+\(Int((navegacion.margenExtra * 100).rounded())) %"
+    }
+
+    @ViewBuilder
+    private var rutasPropuestas: some View {
+        if navegacion.calculando {
+            HStack {
+                ProgressView()
+                Text("Calculando las rutas…")
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            // Mientras se prepara la navegación, la elegida no se cambia
+            VStack(spacing: 8) {
+                ForEach(navegacion.variantes) { variante in
+                    tarjetaVariante(variante)
+                }
+            }
+            .frame(maxHeight: .infinity, alignment: .top)
+            .disabled(navegacion.preparando)
         }
     }
 
@@ -365,103 +369,171 @@ struct NavegacionView: View {
         let tono = color(variante.tipo)
         return Button {
             navegacion.elegida = variante.tipo
+            // También si ya era la elegida: vuelve a encuadrarla
+            encuadrarElegida()
         } label: {
-            HStack(alignment: .center, spacing: 12) {
+            HStack(spacing: 10) {
                 Image(systemName: variante.tipo.icono)
-                    .font(.title2)
+                    .font(.title3)
                     .foregroundStyle(.white)
-                    .frame(width: 46, height: 46)
+                    .frame(width: 38, height: 38)
                     .background(tono, in: Circle())
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(verbatim: variante.nombre)
-                        .font(.headline)
-                    HStack(spacing: 10) {
-                        Text(verbatim: Flechas.duracion(variante.segundos))
-                            .font(.title3.weight(.semibold))
-                            .monospacedDigit()
-                        Text(verbatim: Flechas.distancia(variante.metros))
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                    }
-                    Text(verbatim: detalle(variante))
-                        .font(.subheadline)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                    Text(verbatim: resumen(variante))
+                        .font(.footnote)
                         .foregroundStyle(.secondary)
-                    if variante.metrosPeaje > 0 || variante.metrosSinAsfaltar > 0 {
-                        ViewThatFits(in: .horizontal) {
-                            HStack(spacing: 6) { etiquetas(variante) }
-                            VStack(alignment: .leading, spacing: 4) { etiquetas(variante) }
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                    if let avisos = avisos(variante) {
+                        Label {
+                            Text(verbatim: avisos)
+                        } icon: {
+                            Image(systemName: "exclamationmark.triangle.fill")
                         }
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.orange)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                     }
                 }
                 Spacer(minLength: 0)
                 Image(systemName: esElegida ? "checkmark.circle.fill" : "circle")
-                    .font(.title2)
+                    .font(.title3)
                     .foregroundStyle(esElegida ? tono : Color.secondary)
             }
-            .padding(12)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
             .background(
                 esElegida ? tono.opacity(0.12) : Color.secondary.opacity(0.08),
-                in: RoundedRectangle(cornerRadius: 14)
+                in: RoundedRectangle(cornerRadius: 12)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 14)
-                    .stroke(esElegida ? tono : Color.clear, lineWidth: 2)
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(esElegida ? tono : Color.clear, lineWidth: 2)
             )
-            .contentShape(RoundedRectangle(cornerRadius: 14))
+            .contentShape(RoundedRectangle(cornerRadius: 12))
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(esElegida ? .isSelected : [])
     }
 
-    /// Avisos de peaje y tierra de una ruta. Los km son un máximo: Valhalla
+    /// «1 h 26 min · 95 km · 33 curvas», y si no es la más rápida, lo que tarda
+    /// de más.
+    private func resumen(_ variante: VarianteRuta) -> String {
+        var partes = [
+            Flechas.duracion(variante.segundos),
+            Flechas.distancia(variante.metros),
+            variante.curvas == 1 ? "1 curva" : "\(variante.curvas) curvas",
+        ]
+        if !variante.tipos.contains(.rapida),
+           let rapida = navegacion.variantes.first(where: { $0.tipos.contains(.rapida) }) {
+            let demas = variante.segundos - rapida.segundos
+            if demas >= 60 {
+                partes.append("+" + Flechas.duracion(demas))
+            }
+        }
+        return partes.joined(separator: " · ")
+    }
+
+    /// Peaje y tierra de la ruta, si los lleva. Los km son un máximo: Valhalla
     /// marca la maniobra entera.
-    @ViewBuilder
-    private func etiquetas(_ variante: VarianteRuta) -> some View {
+    private func avisos(_ variante: VarianteRuta) -> String? {
+        var partes: [String] = []
         if variante.metrosPeaje > 0 {
-            etiqueta("Peaje · hasta \(Flechas.distancia(variante.metrosPeaje))", icono: "eurosign.circle.fill", tono: .orange)
+            partes.append("Peaje, hasta \(Flechas.distancia(variante.metrosPeaje))")
         }
         if variante.metrosSinAsfaltar > 0 {
-            etiqueta("Sin asfaltar · hasta \(Flechas.distancia(variante.metrosSinAsfaltar))", icono: "mountain.2.fill", tono: .brown)
+            partes.append("Sin asfaltar, hasta \(Flechas.distancia(variante.metrosSinAsfaltar))")
+        }
+        return partes.isEmpty ? nil : partes.joined(separator: " · ")
+    }
+
+    /// Cancelar (una X roja) e iniciar (grande, en verde).
+    private var botonesRuta: some View {
+        HStack(spacing: 12) {
+            Button {
+                navegacion.cancelarRuta()
+                camara = .userLocation(fallback: .automatic)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 54, height: 54)
+                    .background(Color.red, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Text("Cancelar"))
+
+            Button {
+                navegacion.iniciar()
+            } label: {
+                HStack(spacing: 8) {
+                    if navegacion.preparando {
+                        ProgressView()
+                            .tint(.white)
+                    } else {
+                        Image(systemName: "location.north.fill")
+                    }
+                    Text(navegacion.preparando ? "Preparando…" : "Iniciar")
+                }
+                .font(.title3.weight(.bold))
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity, minHeight: 54)
+                .background(Color.green, in: RoundedRectangle(cornerRadius: 16))
+            }
+            .buttonStyle(.plain)
+            .disabled(navegacion.preparando || navegacion.variantes.isEmpty)
+            .opacity(navegacion.variantes.isEmpty ? 0.5 : 1)
         }
     }
 
-    private func etiqueta(_ texto: String, icono: String, tono: Color) -> some View {
+    /// Avisos sobre la parte de abajo del mapa: errores y rutas con tierra.
+    private var avisosExploracion: some View {
+        VStack(spacing: 6) {
+            if let aviso = navegacion.aviso {
+                etiquetaMapa(aviso, icono: "exclamationmark.circle.fill", color: .red)
+            }
+            if navegacion.sinRutaDeAsfalto {
+                etiquetaMapa(
+                    "Todas las rutas llevan algún tramo sin asfaltar.",
+                    icono: "exclamationmark.triangle.fill",
+                    color: .orange
+                )
+            }
+        }
+    }
+
+    private func etiquetaMapa(_ texto: String, icono: String, color: Color) -> some View {
         Label {
             Text(verbatim: texto)
         } icon: {
             Image(systemName: icono)
         }
-        .font(.caption.weight(.semibold))
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(tono.opacity(0.18), in: Capsule())
-        .foregroundStyle(tono)
+        .font(.footnote.weight(.semibold))
+        .multilineTextAlignment(.leading)
+        .lineLimit(3)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+        .foregroundStyle(color)
     }
 
-    private func avisoRutas(_ texto: LocalizedStringKey) -> some View {
-        Label(texto, systemImage: "exclamationmark.triangle.fill")
-            .font(.footnote)
-            .foregroundStyle(.orange)
-    }
-
-    private var notaVariantes: String {
-        let margen = Int((navegacion.margenExtra * 100).rounded())
-        var nota = "La más divertida es la de más curvas sin tardar más de un \(margen) % que la más rápida."
-        if !navegacion.soloAsfalto {
-            nota += " «Por tierra», la de más tramos sin asfaltar con el mismo margen."
+    /// Encuadra la ruta elegida entera en el mapa.
+    private func encuadrarElegida() {
+        guard let variante = navegacion.variantes.first(where: { $0.tipos.contains(navegacion.elegida) })
+            ?? navegacion.variantes.first
+        else { return }
+        let puntos = variante.geometria
+        guard puntos.count > 1 else { return }
+        let rect = MKPolyline(coordinates: puntos, count: puntos.count).boundingMapRect
+        let margen = max(rect.size.width, rect.size.height) * 0.15
+        withAnimation {
+            camara = .rect(rect.insetBy(dx: -margen, dy: -margen))
         }
-        return nota + " Las curvas las cuenta la app; los km de peaje y sin asfaltar son un máximo."
-    }
-
-    /// «32 curvas», y si no es la más rápida, lo que tarda de más.
-    private func detalle(_ variante: VarianteRuta) -> String {
-        let curvas = variante.curvas == 1 ? "1 curva" : "\(variante.curvas) curvas"
-        guard !variante.tipos.contains(.rapida),
-              let rapida = navegacion.variantes.first(where: { $0.tipos.contains(.rapida) })
-        else { return curvas }
-        let demas = variante.segundos - rapida.segundos
-        guard demas >= 60 else { return curvas }
-        return curvas + " · +" + Flechas.duracion(demas)
     }
 
     private func color(_ tipo: TipoVariante) -> Color {
@@ -596,34 +668,43 @@ struct NavegacionView: View {
     }
 
     /// Atribución de los datos de la ruta (OpenStreetMap, ODbL). La del mapa de
-    /// Apple la pone MapKit.
+    /// Apple la pone MapKit. Una línea, para que quepa en el panel.
     private var atribucion: some View {
-        Text(verbatim: "Mapa y búsqueda: Apple · Rutas: Valhalla (FOSSGIS) · Datos de ruta © colaboradores de OpenStreetMap")
+        Text(verbatim: "Rutas: Valhalla (FOSSGIS) · © colaboradores de OpenStreetMap")
             .font(.caption2)
             .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
     }
 }
 
-/// Propone a su contenido como mucho `alto` y ocupa solo lo que el contenido
-/// necesite. Un `.frame(maxHeight:)` crecería hasta el máximo si le proponen
-/// más altura.
-private struct AltoMaximo: Layout {
-    var alto: CGFloat
+/// Icono de SF Symbols con una diagonal encima cuando `tachado` (Apple no trae
+/// el euro ni la carretera tachados).
+private struct IconoTachable: View {
+    let nombre: String
+    let tachado: Bool
 
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        guard let contenido = subviews.first else { return .zero }
-        return contenido.sizeThatFits(
-            ProposedViewSize(width: proposal.width, height: min(proposal.height ?? alto, alto))
-        )
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
+    var body: some View {
+        Image(systemName: nombre)
+            .overlay {
+                if tachado {
+                    GeometryReader { geometria in
+                        let lado = geometria.size
+                        Path { trazo in
+                            trazo.move(to: CGPoint(x: lado.width * 0.08, y: lado.height * 0.08))
+                            trazo.addLine(to: CGPoint(x: lado.width * 0.92, y: lado.height * 0.92))
+                        }
+                        .stroke(.foreground, style: StrokeStyle(lineWidth: max(1.5, lado.width / 10), lineCap: .round))
+                    }
+                }
+            }
     }
 }
 
-/// Dirección del servidor de rutas (Servidores.swift).
-struct AjustesServidoresView: View {
+/// Ajustes: la simulación del recorrido (para pruebas) y la dirección del
+/// servidor de rutas (Servidores.swift).
+struct AjustesView: View {
+    @ObservedObject var navegacion: Navegacion
     @Environment(\.dismiss) private var cerrar
     @AppStorage(Servidores.claveRutas) private var rutas = ""
 
@@ -631,22 +712,36 @@ struct AjustesServidoresView: View {
         NavigationStack {
             Form {
                 Section {
+                    Toggle("Simular el recorrido", isOn: $navegacion.simular)
+                    if navegacion.simular {
+                        Picker("Velocidad", selection: $navegacion.factorSimulacion) {
+                            Text(verbatim: "36 km/h").tag(UInt64(1))
+                            Text(verbatim: "72 km/h").tag(UInt64(2))
+                            Text(verbatim: "108 km/h").tag(UInt64(3))
+                        }
+                        .pickerStyle(.segmented)
+                    }
+                } header: {
+                    Text("Pruebas")
+                } footer: {
+                    Text("En vez del GPS, una posición que recorre la ruta sola, para ver cambiar las indicaciones sin moverse.")
+                }
+                Section {
                     TextField(Servidores.rutasPorDefecto, text: $rutas)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
+                    Button("Volver al servidor público") {
+                        rutas = ""
+                    }
                 } header: {
                     Text("Rutas (Valhalla)")
                 } footer: {
                     Text("Vacío: el servidor público de FOSSGIS. Uso razonable, como mucho una petición por segundo.")
                 }
-                Section {
-                    Button("Volver al servidor público") {
-                        rutas = ""
-                    }
-                }
             }
-            .navigationTitle("Servidor de rutas")
+            .navigationTitle("Ajustes")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Listo") { cerrar() }

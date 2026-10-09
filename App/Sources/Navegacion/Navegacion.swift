@@ -20,7 +20,7 @@ enum TipoVariante: String, CaseIterable, Identifiable {
     var nombre: String {
         switch self {
         case .rapida: return "La más rápida"
-        case .divertida: return "La más divertida"
+        case .divertida: return "Mayor cantidad de curvas"
         case .tierra: return "Por tierra"
         }
     }
@@ -126,11 +126,10 @@ final class Navegacion: ObservableObject {
             preferenciaCambiada()
         }
     }
-    /// Marcado al abrir la app; se puede desmarcar para un viaje.
-    @Published var soloAsfalto = true {
-        didSet { preferenciaCambiada() }
-    }
-    /// Tiempo extra admitido para la más divertida y la de tierra sobre la más
+    /// Primera fase: solo rutas por carretera (decisión del autor, 2026-10-09).
+    /// Sin botón: siempre activado, así que tampoco se propone «Por tierra».
+    let soloAsfalto = true
+    /// Tiempo extra admitido para la de más curvas (y la de tierra) sobre la más
     /// rápida (0,25 = un 25 % más), de 0 a 2. Cambiarlo no pide rutas nuevas:
     /// vuelve a elegir entre las candidatas.
     @Published var margenExtra = ClavePreferencia.margenGuardado() {
@@ -138,6 +137,18 @@ final class Navegacion: ObservableObject {
             UserDefaults.standard.set(margenExtra, forKey: ClavePreferencia.margenExtra)
             elegirVariantes()
         }
+    }
+
+    /// Botones − y + de la barra: al múltiplo de 25 % anterior o siguiente,
+    /// entre 0 y 200 %.
+    func cambiarMargen(pasos: Int) {
+        let paso = 0.25
+        let posicion = margenExtra / paso
+        // Un pequeño margen para que 0,5 no cuente como «entre» 0,25 y 0,5
+        let nuevo = pasos > 0
+            ? (floor(posicion + 1e-6) + Double(pasos)) * paso
+            : (ceil(posicion - 1e-6) + Double(pasos)) * paso
+        margenExtra = min(2, max(0, nuevo))
     }
 
     // MARK: Rutas propuestas
