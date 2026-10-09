@@ -83,6 +83,8 @@ struct RutaCandidata {
 struct VarianteRuta: Identifiable {
     let tipos: [TipoVariante]
     let candidata: RutaCandidata
+    /// Su posición entre las candidatas del cálculo (Navegacion.detalles).
+    let indice: Int
 
     /// El papel principal, que da el color y el icono.
     var tipo: TipoVariante { tipos[0] }
@@ -223,6 +225,14 @@ final class Navegacion: ObservableObject {
 
     /// Las candidatas del último cálculo, para volver a elegir sin pedir nada.
     private var candidatas: [RutaCandidata] = []
+    /// Km de autopista, peaje y sin asfaltar de las rutas propuestas, tramo a
+    /// tramo (ClienteValhalla.detalleVias), por índice de candidata: llegan un
+    /// momento después que las rutas (a petición del autor, 2026-10-09: los de
+    /// las maniobras se pasaban). Si la petición falla, va en detallesFallidos
+    /// y la tarjeta usa los de las maniobras, como un máximo.
+    @Published private(set) var detalles: [Int: DetalleVias] = [:]
+    @Published private(set) var detallesFallidos: Set<Int> = []
+    private var tareaDetalles: Task<Void, Never>?
     /// Cálculo de rutas o inicio en curso. Cada cálculo nuevo cancela el
     /// anterior; la generación evita que uno viejo pise los datos del nuevo.
     private var tareaVariantes: Task<Void, Never>?
@@ -277,6 +287,7 @@ final class Navegacion: ObservableObject {
     func cancelarRuta() {
         tareaVariantes?.cancel()
         tareaVariantes = nil
+        olvidarDetalles()
         tareaInicio?.cancel()
         tareaInicio = nil
         generacion += 1
@@ -376,6 +387,7 @@ final class Navegacion: ObservableObject {
         }
         aviso = avisoInicial
         candidatas = []
+        olvidarDetalles()
         variantes = []
         sinRutaDeAsfalto = false
         sinRutaPorTierra = false
@@ -457,13 +469,57 @@ final class Navegacion: ObservableObject {
         if let tierra = eleccion.porTierra {
             anadir(tierra, .tierra)
         }
-        variantes = papeles.map { VarianteRuta(tipos: $0.tipos, candidata: candidatas[$0.indice]) }
+        variantes = papeles.map { VarianteRuta(tipos: $0.tipos, candidata: candidatas[$0.indice], indice: $0.indice) }
         // Se mantiene la elegida si sigue entre las propuestas
         if !variantes.contains(where: { $0.tipos.contains(elegida) }) {
             elegida = .rapida
         }
         sinRutaDeAsfalto = eleccion.todasConTierra
         sinRutaPorTierra = !soloAsfalto && eleccion.porTierra == nil
+        // Los km tramo a tramo de las que se ven y aún no los tienen
+        pedirDetalles()
+    }
+
+    private func olvidarDetalles() {
+        tareaDetalles?.cancel()
+        tareaDetalles = nil
+        detalles = [:]
+        detallesFallidos = []
+    }
+
+    /// Pide, una detrás de otra y respetando el ritmo del servidor
+    /// (esperarTurno), los km tramo a tramo de las rutas propuestas que aún no
+    /// los tienen. Si ya hay una tarea, ella sigue con las nuevas.
+    private func pedirDetalles() {
+        guard tareaDetalles == nil, faltaDetalle != nil else { return }
+        let esta = generacion
+        tareaDetalles = Task { [weak self] in
+            await self?.calcularDetalles(generacion: esta)
+        }
+    }
+
+    private var faltaDetalle: Int? {
+        variantes.map { $0.indice }.first { detalles[$0] == nil && !detallesFallidos.contains($0) }
+    }
+
+    private func calcularDetalles(generacion esta: Int) async {
+        defer {
+            if generacion == esta {
+                tareaDetalles = nil
+            }
+        }
+        while generacion == esta, let indice = faltaDetalle, indice < candidatas.count {
+            await esperarTurno()
+            guard generacion == esta, !Task.isCancelled else { return }
+            do {
+                let detalle = try await ClienteValhalla.detalleVias(candidatas[indice].ruta.puntos)
+                guard generacion == esta else { return }
+                detalles[indice] = detalle
+            } catch {
+                guard generacion == esta else { return }
+                detallesFallidos.insert(indice)
+            }
+        }
     }
 
     // MARK: - Navegación

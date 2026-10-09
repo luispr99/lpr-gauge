@@ -497,18 +497,29 @@ struct NavegacionView: View {
     }
 
     /// Peaje, autopista y tierra de la ruta, si los lleva; `advierte` es false
-    /// para lo que solo informa (la autopista). Los km son un máximo: Valhalla
-    /// marca la maniobra entera.
+    /// para lo que solo informa (la autopista). Desde la 0.10.0, tramo a tramo:
+    /// por maniobras eran un máximo, porque Valhalla marca la maniobra entera
+    /// (Segovia → Ávila → Talavera: 44 km de autopista en vez de 10).
     private func avisos(_ variante: VarianteRuta) -> [AvisoRuta] {
+        // Tramo a tramo (Navegacion.detalles), cuando llegan: un momento
+        // después que las rutas, y mientras tanto ninguno. Si no se pudieron
+        // pedir, los de las maniobras, que son un máximo: «hasta». Por debajo
+        // de 100 m no se avisa (un enlace o un cruce sueltos)
+        let detalle = navegacion.detalles[variante.indice]
+        guard detalle != nil || navegacion.detallesFallidos.contains(variante.indice) else { return [] }
+        let peaje = detalle?.metrosPeaje ?? variante.metrosPeaje
+        let autopista = detalle?.metrosAutopista ?? variante.metrosAutopista
+        let tierra = detalle?.metrosSinAsfaltar ?? variante.metrosSinAsfaltar
+        let hasta = detalle == nil ? "hasta " : ""
         var avisos: [AvisoRuta] = []
-        if variante.metrosPeaje > 0 {
-            avisos.append(AvisoRuta(texto: "Peaje \(Flechas.distancia(variante.metrosPeaje))", advierte: true))
+        if peaje >= 100 {
+            avisos.append(AvisoRuta(texto: "Peaje \(hasta)\(Flechas.distancia(peaje))", advierte: true))
         }
-        if variante.metrosAutopista > 0 {
-            avisos.append(AvisoRuta(texto: "Autopista \(Flechas.distancia(variante.metrosAutopista))", advierte: false))
+        if autopista >= 100 {
+            avisos.append(AvisoRuta(texto: "Autopista \(hasta)\(Flechas.distancia(autopista))", advierte: false))
         }
-        if variante.metrosSinAsfaltar > 0 {
-            avisos.append(AvisoRuta(texto: "Sin asfaltar \(Flechas.distancia(variante.metrosSinAsfaltar))", advierte: true))
+        if tierra >= 100 {
+            avisos.append(AvisoRuta(texto: "Sin asfaltar \(hasta)\(Flechas.distancia(tierra))", advierte: true))
         }
         return avisos
     }

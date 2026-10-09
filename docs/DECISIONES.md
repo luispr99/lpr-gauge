@@ -482,6 +482,25 @@ final.
   - si la de más curvas coincide con la más rápida, su tarjeta sale igual,
     apagada: «No hay coincidencia con +25 % de tiempo extra», en vez de una
     tarjeta grande sola.
+- **0.10.1, km de autopista, peaje y sin asfaltar tramo a tramo** (a
+  petición del autor, 2026-10-09):
+  - El autor lo detectó con Segovia → Ávila → Talavera de la Reina, donde solo
+    hay unos 10 km de autovía y la app daba 50.
+  - Lo comprobé con Valhalla el mismo día. Por maniobras salían 44,3 km: la
+    maniobra «Manténgase a la derecha para tomar la SG-20» mide 33,4 km,
+    porque sigue unos 28 km por la N-110 sin indicación nueva, y se marca y se
+    cuenta entera. Tramo a tramo (`/trace_attributes`), 10,2 km: SG-20 3,5 y
+    AV-20 6,8.
+  - La N-110 y la N-502 están en OpenStreetMap como `trunk` (nacionales), no
+    como autopista: está bien que no cuenten.
+  - **Ahora:** al proponer las rutas, la app pide para cada una que se ve sus
+    atributos tramo a tramo (`ClienteValhalla.detalleVias`, `walk_or_snap`;
+    con `edge_walk` la misma ruta fallaba). Suma autopista sin enlaces, peaje y
+    sin asfaltar (LPRCore, `Atributos.swift`, con pruebas).
+  - Son dos peticiones más por búsqueda, al mismo ritmo de una por segundo:
+    los avisos salen un momento después que las rutas. Por debajo de 100 m no
+    se avisa. Si la petición falla, se usan los de las maniobras con «hasta».
+  - La elección de rutas no cambia: sigue con los datos de las maniobras.
 - **Cuadro:** se hace en su proyecto (el código no entra en este
   repositorio): `docs/CAMBIOS_CLAUDE.md`, sección 76.
 
