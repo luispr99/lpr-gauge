@@ -1,6 +1,6 @@
 # Protocolo BLE móvil → cuadro
 
-> **Estado: borrador v0.11 (2026-10-09), sin validar.** Los puntos marcados
+> **Estado: borrador v0.12 (2026-10-10), sin validar.** Los puntos marcados
 > **[PENDIENTE]** faltan por completar. Mientras sea borrador, nada de lo que hay
 > aquí es definitivo y puede cambiar sin mantener compatibilidad. Los cambios de
 > cada versión están en la [sección 13](#13-cambios).
@@ -58,8 +58,9 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
   excepciones son `NAV_TEXT` (sección 7 bis), `TRAZO` (sección 7 ter) y
   `CRUCES` (sección 7 quater), que se ajustan al MTU de la conexión, y `NAV`
   desde la v0.10 (25 bytes con el resumen del viaje; 31 con el «y luego» de la
-  v0.11): la app manda los campos que quepan en lo que admita la conexión, de
-  17, 25 o 31 bytes.
+  v0.11; de 32 a 48 con los carriles de la v0.12): la app manda los campos que
+  quepan en lo que admita la conexión, de 17, 25, 31 o de 32 a 48 bytes (estos,
+  solo con el bit 11 de capacidades).
 
 ## 3. Reglas comunes de codificación
 
@@ -81,7 +82,7 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
 |---|---|---|---|
 | 0 | versión | u8 | Versión del protocolo del dispositivo: 1. |
 | 1 | tipo | u8 | 1 = cuadro de moto; 2 = firmware de referencia (solo serie). |
-| 2-3 | capacidades | u16 | Bit 0 `NAV`, bit 1 `GPS`, bit 2 `STATUS`, bit 3 `NAV_TEXT`, bit 4 `CONFIG`, bit 5 `MOVIL`, bit 6 `TRAZO`, bit 7 `MOVIL` al cambiar (sección 7), bit 8 `CRUCES`, bit 9 anillos: dibuja los anillos de las rotondas de `CRUCES` (sección 7 quater, v0.8), bit 10 movimiento: acepta `TRAZO` con la posición en la ruta y los puntos de detrás, y mueve el dibujo él solo entre mensajes (sección 7 ter, v0.9). |
+| 2-3 | capacidades | u16 | Bit 0 `NAV`, bit 1 `GPS`, bit 2 `STATUS`, bit 3 `NAV_TEXT`, bit 4 `CONFIG`, bit 5 `MOVIL`, bit 6 `TRAZO`, bit 7 `MOVIL` al cambiar (sección 7), bit 8 `CRUCES`, bit 9 anillos: dibuja los anillos de las rotondas de `CRUCES` (sección 7 quater, v0.8), bit 10 movimiento: acepta `TRAZO` con la posición en la ruta y los puntos de detrás, y mueve el dibujo él solo entre mensajes (sección 7 ter, v0.9), bit 11 carriles: acepta `NAV` con los carriles y los dibuja (sección 5, v0.12). |
 | 4 | frecuencia máxima | u8 | Mensajes por segundo y característica que acepta (0 = sin límite). |
 | 5-7 | versión de firmware | u8 × 3 | Mayor, menor, parche. |
 
@@ -110,10 +111,27 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
 | 26 | luego: modificador | u8 | 0 | Como el byte 4, para esa maniobra (v0.11). |
 | 27-28 | luego: ángulo | i16 | `0x7FFF` | Como los bytes 7-8, para esa maniobra (v0.11). |
 | 29-30 | luego: distancia | u16 | `0xFFFF` | Metros entre la siguiente maniobra y esa; satura en 65 534 (v0.11). |
+| 31 | carriles | u8 | 0 | Cuántos carriles van detrás, de 0 a 8; 0 si no hay que enseñarlos (v0.12). |
+| 32… | flechas de cada carril | u8 × n | — | Un byte por carril, de izquierda a derecha: las flechas pintadas en él, un bit por dirección (abajo). 0: sin flechas (v0.12). |
+| 32+n… | flechas válidas de cada carril | u8 × n | — | Un byte por carril, en el mismo orden: las de sus flechas que sirven para la maniobra; 0 si el carril no vale (v0.12). |
 
 - Longitud mínima: 9 bytes. Los campos de la v0.6 están si el mensaje tiene 17
   bytes o más; los de la v0.10, si tiene 25 o más; los de la v0.11, si tiene
-  31 o más; si no, son desconocidos.
+  31 o más; si no, son desconocidos. Los carriles (v0.12) están si tiene 32
+  bytes o más y caben todos (32 + 2n); si no, no hay.
+- **Carriles (v0.12, a petición del autor el 2026-10-10, con un recuadro
+  arriba en el mapa):** la app manda los del aviso que se ve de Valhalla
+  (`bannerInstructions[].sub`, tipo `lane`; en Ferrostar, `laneInfo`). Valhalla
+  solo los pone en el aviso de los últimos metros antes de algunas maniobras
+  (400 m en una salida de autovía, comprobado el 2026-10-10 con
+  valhalla1.openstreetmap.de), y dependen de que estén marcados en
+  OpenStreetMap: el dispositivo los enseña mientras lleguen. Bits de cada
+  dirección: 0 recto, 1 ligera a la derecha, 2 derecha, 3 fuerte a la
+  derecha, 4 cambio de sentido, 5 ligera a la izquierda, 6 izquierda, 7 fuerte
+  a la izquierda. La flecha válida es la dirección activa del carril; si el
+  carril vale y no la trae, todas las suyas. Más de 8 carriles, o recalculando,
+  fuera de ruta o al llegar: 0. Solo con el bit 11 de capacidades: si no, la
+  app manda 31 bytes como mucho.
 - **«Y luego» (v0.11, a petición del autor el 2026-10-09):** la app manda la
   maniobra que va después de la siguiente y la distancia entre las dos, con
   la misma regla de códigos y ángulos. Si las dos están a 150 m o menos
@@ -478,6 +496,9 @@ la da el ángulo de `NAV` (sección 5). Ya no se intenta seguir los códigos
 
 ## 13. Cambios
 
+- **v0.12 (2026-10-10):** `NAV` con los carriles antes de la maniobra
+  (sección 5), de 32 a 48 bytes, y bit 11 de capacidades. La versión del
+  formato sigue siendo 1.
 - **v0.11 (2026-10-09):** `NAV` con la maniobra que va después de la
   siguiente y la distancia entre las dos («y luego», sección 5), 31 bytes. La
   versión del formato sigue siendo 1.

@@ -277,12 +277,81 @@ final class MensajesTests: XCTestCase {
         despues.tiempoViaje = 11
         despues.distanciaRecorrida = 120
         XCTAssertEqual(antes.codificarSinResumen(), despues.codificarSinResumen())
-        XCTAssertEqual(antes.codificarSinResumen().count, MensajeNav.longitudConLuego)
+        XCTAssertEqual(antes.codificarSinResumen().count, MensajeNav.longitudConCarriles)
         XCTAssertEqual(Array(antes.codificarSinResumen()[17...24]), sinResumen)
         despues.maniobraLuego = .recto
         despues.anguloLuego = 0
         despues.distanciaLuego = 40
         XCTAssertNotEqual(antes.codificarSinResumen(), despues.codificarSinResumen())
+    }
+
+    func testNavConCarriles() {
+        // Carriles (v0.12, docs/vectores/mensajes.md): el mensaje de
+        // testNavConLuego con cuatro carriles: recto, recto, recto o ligera
+        // a la derecha (vale la ligera) y ligera a la derecha (vale)
+        let carriles = [
+            Carril(direcciones: .recto),
+            Carril(direcciones: .recto),
+            Carril(direcciones: [.recto, .ligeraDerecha], validas: .ligeraDerecha),
+            Carril(direcciones: .ligeraDerecha, validas: .ligeraDerecha),
+        ]
+        let mensaje = MensajeNav(secuencia: 0x12, banderas: [.rutaActiva], maniobra: .giro, distancia: 80,
+                                 angulo: 90, distanciaRestante: 2_000, tiempoRestante: 240, horaLlegada: 600,
+                                 longitudPaso: 300, tiempoViaje: 754, distanciaRecorrida: 9_000,
+                                 maniobraLuego: .rotonda, modificadorLuego: 2, anguloLuego: -45, distanciaLuego: 120,
+                                 carriles: carriles)
+        let v011: [UInt8] = [
+            0x01, 0x12, 0x01, 0x02, 0x00,
+            0x50, 0x00, 0x5A, 0x00,
+            0xC8, 0x00, 0x04, 0x00, 0x58, 0x02, 0x2C, 0x01,
+            0xF2, 0x02, 0x00, 0x00, 0x28, 0x23, 0x00, 0x00,
+            0x03, 0x02, 0xD3, 0xFF, 0x78, 0x00,
+        ]
+        let bytes = mensaje.codificar(maximo: 182)
+        XCTAssertEqual(bytes, v011 + [0x04, 0x01, 0x01, 0x03, 0x02, 0x00, 0x00, 0x02, 0x02])
+        XCTAssertEqual(MensajeNav.decodificar(bytes), mensaje)
+        // Sin decir el máximo, los 31 de la v0.11 (la placa sin el bit 11)
+        XCTAssertEqual(mensaje.codificar(), v011)
+        // Justo lo que ocupan, todo; con menos (pero 32 o más), sin carriles
+        XCTAssertEqual(mensaje.codificar(maximo: 40), bytes)
+        XCTAssertEqual(mensaje.codificar(maximo: 39), v011 + [0x00])
+        XCTAssertEqual(mensaje.codificar(maximo: 32), v011 + [0x00])
+        // Sin carriles, 32 bytes
+        var sin = mensaje
+        sin.carriles = []
+        XCTAssertEqual(sin.codificar(maximo: 182), v011 + [0x00])
+        XCTAssertEqual(MensajeNav.decodificar(v011 + [0x00]), sin)
+        // Más de 8: no se mandan
+        var muchos = mensaje
+        muchos.carriles = Array(repeating: Carril(direcciones: .recto), count: 9)
+        XCTAssertEqual(muchos.codificar(maximo: 182), v011 + [0x00])
+        // Cortado a medias o con un número imposible: sin carriles; el resto
+        // se lee igual
+        XCTAssertEqual(MensajeNav.decodificar(Array(bytes.prefix(39)))?.carriles, [])
+        XCTAssertEqual(MensajeNav.decodificar(Array(bytes.prefix(39)))?.distanciaLuego, 120)
+        XCTAssertEqual(MensajeNav.decodificar(v011 + [0x09] + Array(repeating: 0x01, count: 18))?.carriles, [])
+        // Los carriles cuentan como cambio
+        XCTAssertNotEqual(mensaje.codificarSinResumen(), sin.codificarSinResumen())
+    }
+
+    func testCarrilDesdeOSRM() {
+        // Como los da Valhalla (comprobado el 2026-10-10 con una salida de
+        // autovía): el carril que vale, con su dirección activa
+        XCTAssertEqual(Carril(osrmActivo: true, direcciones: ["straight", "right"], activa: "right"),
+                       Carril(direcciones: [.recto, .derecha], validas: .derecha))
+        // El que no vale, sin nada resaltado
+        XCTAssertEqual(Carril(osrmActivo: false, direcciones: ["straight"], activa: nil),
+                       Carril(direcciones: .recto))
+        // Vale sin dirección activa, o con una que no es suya: todas las suyas
+        XCTAssertEqual(Carril(osrmActivo: true, direcciones: ["left"], activa: nil),
+                       Carril(direcciones: .izquierda, validas: .izquierda))
+        XCTAssertEqual(Carril(osrmActivo: true, direcciones: ["left", "uturn"], activa: "right"),
+                       Carril(direcciones: [.izquierda, .cambioDeSentido], validas: [.izquierda, .cambioDeSentido]))
+        // «none» y lo desconocido, sin flechas
+        XCTAssertEqual(Carril(osrmActivo: false, direcciones: ["none", "merge to left"], activa: nil),
+                       Carril(direcciones: []))
+        XCTAssertEqual(DireccionesCarril(osrm: "sharp left"), .fuerteIzquierda)
+        XCTAssertEqual(DireccionesCarril(osrm: "slight left").rawValue, 0x20)
     }
 
     func testNavDecodificaElFormatoCorto() {

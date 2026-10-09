@@ -132,6 +132,65 @@ public struct BanderasNav: OptionSet, Equatable {
     public static let llegada      = BanderasNav(rawValue: 1 << 3)
 }
 
+/// Direcciones de las flechas pintadas en un carril (NAV v0.12, §5): un bit
+/// por dirección. Sin ninguna, el carril no tiene flechas.
+public struct DireccionesCarril: OptionSet, Equatable, Hashable {
+    public let rawValue: UInt8
+    public init(rawValue: UInt8) { self.rawValue = rawValue }
+
+    public static let recto          = DireccionesCarril(rawValue: 1 << 0)
+    public static let ligeraDerecha  = DireccionesCarril(rawValue: 1 << 1)
+    public static let derecha        = DireccionesCarril(rawValue: 1 << 2)
+    public static let fuerteDerecha  = DireccionesCarril(rawValue: 1 << 3)
+    public static let cambioDeSentido = DireccionesCarril(rawValue: 1 << 4)
+    public static let ligeraIzquierda = DireccionesCarril(rawValue: 1 << 5)
+    public static let izquierda      = DireccionesCarril(rawValue: 1 << 6)
+    public static let fuerteIzquierda = DireccionesCarril(rawValue: 1 << 7)
+
+    /// La de una indicación de carril de OSRM («straight», «slight right»,
+    /// «uturn»...); «none» y lo que no conoce, ninguna.
+    public init(osrm: String) {
+        switch osrm {
+        case "straight": self = .recto
+        case "slight right": self = .ligeraDerecha
+        case "right": self = .derecha
+        case "sharp right": self = .fuerteDerecha
+        case "uturn": self = .cambioDeSentido
+        case "slight left": self = .ligeraIzquierda
+        case "left": self = .izquierda
+        case "sharp left": self = .fuerteIzquierda
+        default: self = []
+        }
+    }
+}
+
+/// Un carril de la vía antes de la maniobra (NAV v0.12, §5): sus flechas y,
+/// si vale para la maniobra, la que hay que seguir.
+public struct Carril: Equatable {
+    public var direcciones: DireccionesCarril
+    /// Las flechas que se resaltan: vacío si el carril no vale.
+    public var validas: DireccionesCarril
+
+    public init(direcciones: DireccionesCarril, validas: DireccionesCarril = []) {
+        self.direcciones = direcciones
+        self.validas = validas
+    }
+
+    /// Desde los datos de carril de un aviso de OSRM (en Ferrostar, LaneInfo):
+    /// si vale, la dirección activa; si vale sin dirección activa que se
+    /// conozca, todas las suyas (supuesto: con un carril de una sola flecha,
+    /// lo normal, es la misma).
+    public init(osrmActivo activo: Bool, direcciones: [String], activa: String?) {
+        let todas = direcciones.reduce(into: DireccionesCarril()) { $0.formUnion(DireccionesCarril(osrm: $1)) }
+        var validas: DireccionesCarril = []
+        if activo {
+            let una = activa.map { DireccionesCarril(osrm: $0) } ?? []
+            validas = (!una.isEmpty && todas.contains(una)) ? una : todas
+        }
+        self.init(direcciones: todas, validas: validas)
+    }
+}
+
 /// La siguiente maniobra (§5). Los campos sin dato son nil y viajan como
 /// «desconocido».
 public struct MensajeNav: Equatable {
@@ -144,6 +203,11 @@ public struct MensajeNav: Equatable {
     /// Con el «y luego» (v0.11): si el mensaje es más corto, no hay maniobra
     /// luego (código 0) y sus campos son desconocidos.
     public static let longitudConLuego = 31
+    /// Con los carriles (v0.12): 32 bytes sin carriles y 2 más por carril. Si
+    /// el mensaje es más corto, no hay carriles.
+    public static let longitudConCarriles = 32
+    /// Carriles como mucho: con más, no se mandan (§5).
+    public static let maximoCarriles = 8
 
     public var secuencia: UInt8
     public var banderas: BanderasNav
@@ -175,6 +239,9 @@ public struct MensajeNav: Equatable {
     public var anguloLuego: Int?
     /// Metros entre la siguiente maniobra y la de luego (v0.11).
     public var distanciaLuego: Double?
+    /// Los carriles antes de la siguiente maniobra, de izquierda a derecha
+    /// (v0.12); vacío si no se saben o no hace falta enseñarlos.
+    public var carriles: [Carril]
 
     public init(
         secuencia: UInt8,
@@ -192,7 +259,8 @@ public struct MensajeNav: Equatable {
         maniobraLuego: CodigoManiobra = .desconocida,
         modificadorLuego: UInt8 = 0,
         anguloLuego: Int? = nil,
-        distanciaLuego: Double? = nil
+        distanciaLuego: Double? = nil,
+        carriles: [Carril] = []
     ) {
         self.secuencia = secuencia
         self.banderas = banderas
@@ -210,11 +278,15 @@ public struct MensajeNav: Equatable {
         self.modificadorLuego = modificadorLuego
         self.anguloLuego = anguloLuego
         self.distanciaLuego = distanciaLuego
+        self.carriles = carriles
     }
 
-    /// Los 31 bytes de la v0.11 o, si `maximo` (lo que admite la conexión) no
-    /// llega a 31, los 25 de la v0.10, sin el «y luego»; y si tampoco llega a
-    /// 25, los 17 de la v0.6, sin el resumen del viaje (§2). Las distancias y
+    /// Con `maximo` (lo que admite la conexión y la placa) de 32 o más, los
+    /// de la v0.12: 32 bytes y 2 por carril; si los carriles no caben, o son
+    /// más de 8, el byte de carriles a 0. Con `maximo` de 31 (lo que se
+    /// toma si no se da), los 31 de la v0.11; si no llega a 31, los 25 de la
+    /// v0.10, sin el «y luego»; y si tampoco llega a 25, los 17 de la v0.6,
+    /// sin el resumen del viaje (§2). Las distancias y
     /// el tiempo restante se redondean y se saturan en 65 534; los ángulos, en
     /// ±180; una hora de llegada fuera de 0-1439 va como desconocida; el
     /// tiempo de viaje y la distancia recorrida se redondean y se saturan en
@@ -239,18 +311,28 @@ public struct MensajeNav: Equatable {
             bytes.anadirU16(anguloNav(anguloLuego))
             bytes.anadirU16(u16Saturado(distanciaLuego))
         }
+        if maximo >= Self.longitudConCarriles {
+            let n = carriles.count
+            if n <= Self.maximoCarriles && Self.longitudConCarriles + 2 * n <= maximo {
+                bytes.append(UInt8(n))
+                for carril in carriles { bytes.append(carril.direcciones.rawValue) }
+                for carril in carriles { bytes.append(carril.validas.rawValue) }
+            } else {
+                bytes.append(0)
+            }
+        }
         return bytes
     }
 
-    /// Los 31 bytes con el resumen del viaje como desconocido, para ver si ha
+    /// Todo (v0.12) con el resumen del viaje como desconocido, para ver si ha
     /// cambiado algo más que el resumen: el tiempo de viaje cambia cada
-    /// segundo y NAV no se reenvía solo por eso. El «y luego» sí cuenta (solo
-    /// cambia al cambiar de paso).
+    /// segundo y NAV no se reenvía solo por eso. El «y luego» y los carriles
+    /// sí cuentan (cambian con el paso o con el aviso).
     public func codificarSinResumen() -> [UInt8] {
         var copia = self
         copia.tiempoViaje = nil
         copia.distanciaRecorrida = nil
-        return copia.codificar(maximo: Self.longitudConLuego)
+        return copia.codificar(maximo: Int.max)
     }
 
     /// Descarta lo corto y otra versión. Un código de maniobra que no conoce
@@ -292,6 +374,16 @@ public struct MensajeNav: Equatable {
             let anguloLuego = Int16(bitPattern: leerU16(bytes, 27))
             mensaje.anguloLuego = anguloLuego == 0x7FFF ? nil : Int(anguloLuego)
             mensaje.distanciaLuego = valor(29)
+        }
+        // v0.12: los carriles, si están todos; si no, ninguno
+        if bytes.count >= longitudConCarriles {
+            let n = Int(bytes[31])
+            if n <= maximoCarriles && bytes.count >= longitudConCarriles + 2 * n {
+                mensaje.carriles = (0..<n).map {
+                    Carril(direcciones: DireccionesCarril(rawValue: bytes[32 + $0]),
+                           validas: DireccionesCarril(rawValue: bytes[32 + n + $0]))
+                }
+            }
         }
         return mensaje
     }
@@ -844,6 +936,8 @@ public struct Capacidades: OptionSet, Equatable {
     /// los puntos de detrás) y mueve el dibujo él solo entre mensajes (v0.9,
     /// §7 ter).
     public static let movimiento = Capacidades(rawValue: 1 << 10)
+    /// El dispositivo acepta NAV con los carriles y los dibuja (v0.12, §5).
+    public static let carriles = Capacidades(rawValue: 1 << 11)
 }
 
 public struct DeviceInfo: Equatable {

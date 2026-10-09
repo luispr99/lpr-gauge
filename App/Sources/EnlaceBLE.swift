@@ -810,10 +810,11 @@ final class EnlaceBLE: NSObject, ObservableObject {
         navPendiente = false
         var mensaje = navActual
         mensaje.secuencia = secuenciaNav.siguiente()
-        // Con el «y luego» (v0.11) son 31 bytes; si la conexión no los admite,
-        // los 25 de la v0.10 o los 17 de la v0.6 (§2)
+        // Con los carriles (v0.12), si la placa los admite, de 32 a 48 bytes;
+        // sin ellos, con el «y luego» (v0.11), 31; si la conexión no los
+        // admite, los 25 de la v0.10 o los 17 de la v0.6 (§2)
         let maximo = periferico.maximumWriteValueLength(for: .withoutResponse)
-        let bytes = mensaje.codificar(maximo: maximo)
+        let bytes = mensaje.codificar(maximo: admiteCarriles ? maximo : min(maximo, MensajeNav.longitudConLuego))
         guard bytes.count <= maximo else {
             anotar("NAV no cabe en el MTU actual")
             return
@@ -865,6 +866,12 @@ final class EnlaceBLE: NSObject, ObservableObject {
     /// las del anillo.
     var admiteAnillos: Bool {
         admiteCruces && info?.capacidades.contains(.anillos) == true
+    }
+
+    /// Si la placa conectada acepta NAV con los carriles y los dibuja (bit 11,
+    /// v0.12): si no, NAV va sin ellos.
+    var admiteCarriles: Bool {
+        admiteNav && info?.capacidades.contains(.carriles) == true
     }
 
     /// Si la placa conectada acepta TRAZO con movimiento (bit 10, v0.9; siempre

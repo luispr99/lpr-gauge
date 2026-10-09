@@ -1228,3 +1228,33 @@ Ferrostar:
 - [F41] Apple, Core Bluetooth en segundo plano (guía archivada; consultada el
   2026-10-09):
   https://developer.apple.com/library/archive/documentation/NetworkingInternetWeb/Conceptual/CoreBluetooth_concepts/CoreBluetoothBackgroundProcessingForIOSApps/PerformingTasksWhileYourAppIsInTheBackground.html
+
+### 2026-10-10 · Carriles en `NAV` (0.16.0)
+
+- **Petición del autor (protocolo v0.12, `PROTOCOLO.md` §5 y §13):** los
+  carriles antes de la maniobra, en un recuadro arriba en el mapa (eligió
+  esa forma en una vista previa, frente a ponerlos en la franja de abajo).
+- **De dónde salen.** Del aviso que se ve (`currentVisualInstruction`): su
+  `subContent.laneInfo` de Ferrostar, que viene de los componentes `lane` del
+  `sub` de `bannerInstructions` de Valhalla. Comprobado el 2026-10-10 con
+  valhalla1.openstreetmap.de, perfil de moto, una ruta de prueba entre dos
+  sitios públicos de Madrid por la A-6 (la respuesta no entra en el
+  repositorio): de 14 pasos, solo el aviso de la salida de la autovía traía
+  carriles, y solo en sus últimos 400 m. Así, el recuadro sale y se quita
+  con el aviso, sin umbral propio. Dependen de que los carriles estén
+  marcados en OpenStreetMap: muchas maniobras irán sin ellos.
+- **`NAV` pasa a 32 + 2n bytes (n de 0 a 8):** número de carriles y, por
+  carril, las flechas pintadas y las que valen (un bit por dirección).
+  Ferrostar da la dirección activa del carril que vale; si no la da (o no es
+  suya), valen todas las del carril (supuesto). Más de 8, recalculando,
+  fuera de ruta o al llegar: ninguno.
+- **Solo con el bit 11 de capacidades:** sin él, la app manda 31 bytes como
+  mucho (`EnlaceBLE.admiteCarriles`). Si los carriles no caben en lo que
+  admite la conexión, el byte de carriles va a 0.
+- **Ritmo:** los carriles cuentan como cambio de `NAV`
+  (`codificarSinResumen` lleva ahora todo); cambian con el aviso.
+- **Sin probar:** sin compilar en local (no hay Swift en Windows); las
+  pruebas de `Core` corren en el CI. La lectura de `laneInfo` está en la app
+  y no tiene prueba automática. Sin probar en el iPhone ni en la moto.
+- **Cuadro:** se hace en su proyecto (el código no entra en este
+  repositorio).

@@ -1019,7 +1019,10 @@ final class Navegacion: ObservableObject {
     /// tiempo de viaje y la distancia recorrida (v0.10), para el resumen. Y la
     /// maniobra que va después de la siguiente, con los metros entre las dos
     /// («y luego», v0.11; Flechas.luego); el cuadro decide si la enseña (la
-    /// enseña si están a 150 m o menos, §5).
+    /// enseña si están a 150 m o menos, §5). Y los carriles del aviso que se
+    /// ve (v0.12): Valhalla solo los pone en el de los últimos metros antes
+    /// de la maniobra (400 en una salida de autovía, comprobado el
+    /// 2026-10-10), así que el cuadro los enseña mientras lleguen.
     private func navParaCuadro(_ estado: NavigationState) -> MensajeNav? {
         guard navegando else { return nil }
         let viaje = cuentakilometros?.resumen(ahora: Date())
@@ -1042,6 +1045,12 @@ final class Navegacion: ObservableObject {
         let luego: (maniobra: Maniobra, metros: Double)? =
             codigo == .desconocida || codigo == .llegada ? nil : Flechas.luego(pasos)
         let codigoLuego = Flechas.codigo(luego?.maniobra)
+        // Carriles (v0.12): no recalculando ni fuera de ruta (serían los de
+        // una maniobra que ya no toca), ni en la llegada
+        let carriles: [Carril] = recalculando || fueraDeRuta || codigo == .llegada ? [] :
+            (estado.currentVisualInstruction?.subContent?.laneInfo ?? []).map {
+                Carril(osrmActivo: $0.active, direcciones: $0.directions, activa: $0.activeDirection)
+            }
         return MensajeNav(
             secuencia: 0,
             banderas: banderas,
@@ -1061,7 +1070,8 @@ final class Navegacion: ObservableObject {
             modificadorLuego: codigoLuego == .rotonda ? (luego?.maniobra.salidaRotonda ?? 0) : 0,
             anguloLuego: Flechas.angulo(luego?.maniobra),
             // El paso siguiente entero: de la siguiente maniobra a la de luego
-            distanciaLuego: luego?.metros
+            distanciaLuego: luego?.metros,
+            carriles: carriles
         )
     }
 

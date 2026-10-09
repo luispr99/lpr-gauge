@@ -90,6 +90,9 @@ struct PlacaView: View {
                         }
                     }
                     LabeledContent("Eco de la placa") { Text(texto(enlace.ecoNav)) }
+                    LabeledContent("Carriles") {
+                        Text(enlace.admiteCarriles ? "Antes de las maniobras" : "La placa no los dibuja")
+                    }
                 } header: {
                     Text("Flecha en el cuadro")
                 } footer: {
