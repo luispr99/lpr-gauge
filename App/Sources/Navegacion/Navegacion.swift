@@ -841,9 +841,11 @@ final class Navegacion: ObservableObject {
         if let enlace {
             enlace.ponerNav(navParaCuadro(estado))
             if enlace.admiteTrazo,
-               let calculo = trazoParaCuadro(estado, maximoPuntos: enlace.puntosTrazoQueCaben) {
+               let calculo = trazoParaCuadro(estado, maximoPuntos: enlace.puntosTrazoQueCaben,
+                                             conMovimiento: enlace.admiteMovimiento) {
                 // Solo los cruces de este trozo de la ruta entera: desde la moto
-                // (lo que falta, restado de la longitud) hasta el final del tramo.
+                // (lo que falta, restado de la longitud) hasta el final del tramo
+                // (con movimiento, v0.9, el tramo lleva 100 m más por delante).
                 // Con 50 m de holgura por detrás: Ferrostar mide lo que falta del
                 // paso con otra fórmula (Haversine) y la moto podía quedar unos
                 // metros adelantada, quitando los primeros cruces (lo vio la
@@ -852,7 +854,7 @@ final class Navegacion: ObservableObject {
                 let ventana: ClosedRange<Double>? = rutaCruces.flatMap { ruta in
                     estado.currentProgress.map { progreso in
                         let moto = max(0, ruta.longitud - progreso.distanceRemaining)
-                        return max(0, moto - 50)...(moto + Trazo.metrosTramo(nivel: calculo.nivel))
+                        return max(0, moto - 50)...(moto + calculo.metros)
                     }
                 }
                 // Con un cuadro que dibuja los anillos de las rotondas (v0.8),
@@ -875,8 +877,11 @@ final class Navegacion: ObservableObject {
                                     maximo: enlace.callesCrucesQueCaben(anillos: anillos.count),
                                     ventana: ventana)
                     : []
+                // Las calles y los anillos, en los ejes del tramo (la moto en el
+                // origen), también con movimiento
                 enlace.ponerTrazo((puntos: calculo.tramo.puntos, giro: calculo.tramo.giro),
-                                  escala: UInt8(calculo.nivel), calles: calles, anillos: anillos)
+                                  escala: UInt8(calculo.nivel), calles: calles, anillos: anillos,
+                                  atras: calculo.tramo.atras, recorrido: calculo.recorrido)
             } else {
                 enlace.ponerTrazo(nil)
             }
@@ -962,7 +967,13 @@ final class Navegacion: ObservableObject {
     /// nivel (hasta la 0.9.4, hasta 150 m después del giro, entre 250 y 1000:
     /// al acercarse, el cuadro se acercaba y parecía que faltaba más). Nil
     /// fuera de ruta, recalculando o al llegar: el cuadro deja de dibujarlo.
-    private func trazoParaCuadro(_ estado: NavigationState, maximoPuntos: Int) -> (tramo: TramoTrazo, nivel: Int)? {
+    /// Con movimiento (v0.9, un cuadro con el bit 10), 100 m más por delante,
+    /// hasta 150 m de la ruta ya hecha por detrás y el recorrido de la moto en
+    /// la ruta (rutaHecha); si no se puede saber lo hecho, sin los de detrás y
+    /// sin recorrido (el enlace manda entonces el formato de siempre).
+    /// Devuelve también los metros por delante, para la ventana de los cruces.
+    private func trazoParaCuadro(_ estado: NavigationState, maximoPuntos: Int, conMovimiento: Bool)
+        -> (tramo: TramoTrazo, nivel: Int, metros: Double, recorrido: Double?)? {
         guard maximoPuntos >= 2, !llegada, !estado.isCalculatingNewRoute,
               case let .navigating(currentStepGeometryIndex: indice, userLocation: _, snappedUserLocation: ajustada,
                                    remainingSteps: pasos, remainingWaypoints: _, progress: progreso, summary: _,
@@ -976,7 +987,7 @@ final class Navegacion: ObservableObject {
                                 anterior: clave == maniobraEscala ? nivelEscala : nil)
         maniobraEscala = clave
         nivelEscala = nivel
-        let metros = Trazo.metrosTramo(nivel: nivel)
+        let metros = conMovimiento ? Trazo.metrosTramoConMovimiento(nivel: nivel) : Trazo.metrosTramo(nivel: nivel)
         // Solo los pasos que hacen falta: del actual cuenta lo que queda
         let cuantos = Trazo.pasosNecesarios(distancias: pasos.map { $0.distance },
                                             restanteEnActual: progreso.distanceToNextManeuver, metros: metros)
@@ -984,10 +995,48 @@ final class Navegacion: ObservableObject {
             paso.geometry.map { PuntoRuta(latitud: $0.lat, longitud: $0.lng) }
         }
         let origen = PuntoRuta(latitud: ajustada.coordinates.lat, longitud: ajustada.coordinates.lng)
+        let hecha = conMovimiento ? rutaHecha(pasos: pasos, progreso: progreso) : nil
         guard let tramo = Trazo.tramo(pasos: geometrias, indice: indice.map { Int($0) }, desde: origen,
-                                      metros: metros, giro: geometrias.first?.last, maximoPuntos: maximoPuntos)
+                                      metros: metros, giro: geometrias.first?.last, maximoPuntos: maximoPuntos,
+                                      anteriores: hecha?.anteriores)
         else { return nil }
-        return (tramo, nivel)
+        return (tramo: tramo, nivel: nivel, metros: metros, recorrido: hecha?.recorrido)
+    }
+
+    /// Lo ya hecho de la ruta del guiado, para TRAZO con movimiento (v0.9):
+    /// el recorrido de la moto, en metros desde el inicio de la ruta, y los
+    /// pasos ya hechos que hacen falta para los 150 m de detrás (en el orden
+    /// de la ruta; del actual, Trazo.tramo usa el trozo antes de la moto).
+    /// Ferrostar solo da los pasos que quedan: los hechos salen de su ruta
+    /// (FerrostarCore.route, que cambia con una ruta recalculada), los
+    /// primeros, como en viaSiguiente. El recorrido es la suma de las
+    /// distancias de los pasos hechos más lo hecho del actual (su distancia
+    /// menos lo que falta para la maniobra); es la longitud de la ruta menos
+    /// lo que falta (distanceRemaining), pero sin mezclar la longitud de la
+    /// ruta con la de los pasos. Con una ruta nueva vuelve a empezar. Nil si
+    /// la ruta de Ferrostar no casa con los pasos (por ejemplo, justo al
+    /// cambiar de ruta).
+    private func rutaHecha(pasos: [RouteStep], progreso: TripProgress)
+        -> (recorrido: Double, anteriores: [[PuntoRuta]])? {
+        guard let ruta = nucleo?.route, let actual = pasos.first else { return nil }
+        let hechos = ruta.steps.count - pasos.count
+        guard hechos >= 0, ruta.steps[hechos].geometry == actual.geometry else { return nil }
+        let antes = ruta.steps[0..<hechos].reduce(0.0) { $0 + max(0, $1.distance) }
+        let longitudActual = max(0, actual.distance)
+        let enActual = min(longitudActual, max(0, longitudActual - progreso.distanceToNextManeuver))
+        let recorrido = antes + enActual
+        guard recorrido.isFinite else { return nil }
+        // Los pasos hechos que hacen falta, del más cercano hacia atrás, con 50 m
+        // de margen (como Trazo.pasosNecesarios)
+        var anteriores: [[PuntoRuta]] = []
+        var suma = enActual
+        var i = hechos - 1
+        while i >= 0 && suma < Trazo.metrosDetras + 50 {
+            anteriores.insert(ruta.steps[i].geometry.map { PuntoRuta(latitud: $0.lat, longitud: $0.lng) }, at: 0)
+            suma += max(0, ruta.steps[i].distance)
+            i -= 1
+        }
+        return (recorrido: recorrido, anteriores: anteriores)
     }
 
     private func posicionNueva(_ posicion: CLLocation) {

@@ -1,4 +1,4 @@
-// Codificación y decodificación de los mensajes (docs/PROTOCOLO.md, v0.8).
+// Codificación y decodificación de los mensajes (docs/PROTOCOLO.md, v0.9).
 // Reglas comunes (sección 3): little-endian, primer byte = versión, campos
 // nuevos al final; el receptor ignora los bytes que sobran y descarta los
 // mensajes cortos o con una versión que no conoce.
@@ -32,6 +32,31 @@ extension Array where Element == UInt8 {
 /// El u16 en little-endian que empieza en `i`.
 func leerU16(_ bytes: [UInt8], _ i: Int) -> UInt16 {
     UInt16(bytes[i]) | UInt16(bytes[i + 1]) << 8
+}
+
+extension Array where Element == UInt8 {
+    /// Añade un u32 en little-endian (TRAZO con movimiento, v0.9).
+    mutating func anadirU32(_ valor: UInt32) {
+        append(UInt8(valor & 0xFF))
+        append(UInt8((valor >> 8) & 0xFF))
+        append(UInt8((valor >> 16) & 0xFF))
+        append(UInt8(valor >> 24))
+    }
+}
+
+/// El u32 en little-endian que empieza en `i`.
+func leerU32(_ bytes: [UInt8], _ i: Int) -> UInt32 {
+    let bajo = UInt32(leerU16(bytes, i))
+    let alto = UInt32(leerU16(bytes, i + 2))
+    return bajo | alto << 16
+}
+
+/// Un valor sin signo en u32 (el recorrido de TRAZO, v0.9): redondeado y
+/// saturado entre 0 y 4 294 967 295; lo que no es finito, 0. El campo no tiene
+/// valor de desconocido (§7 ter).
+func u32Saturado(_ valor: Double) -> UInt32 {
+    guard valor.isFinite else { return 0 }
+    return UInt32(min(4_294_967_295, max(0, valor.rounded())))
 }
 
 /// Metros como i16 (TRAZO y CRUCES): redondeados al metro y saturados en
@@ -411,35 +436,68 @@ public struct MensajeTrazo: Equatable {
     public static let longitudMinima = 4
     /// Como mucho: 4 bytes de cabecera y 44 puntos de 4 bytes (180 bytes).
     public static let maximoPuntos = 44
+    /// Con movimiento (v0.9): 9 bytes de cabecera (versión, secuencia, flags,
+    /// giro, recorrido en u32 y cuántos puntos van detrás)…
+    public static let longitudMinimaMovimiento = 9
+    /// …y como mucho 42 puntos (177 bytes)…
+    public static let maximoPuntosMovimiento = 42
+    /// …de los que como mucho 10 van por detrás de la moto.
+    public static let maximoAtras = 10
+    /// Bit 3 de los flags: formato con movimiento (v0.9).
+    static let banderaMovimiento: UInt8 = 0x08
 
     public var secuencia: UInt8
     /// Metros en los ejes de la moto (Trazo); con menos de dos, no hay tramo.
+    /// Con movimiento, primero los `atras` de detrás (del más lejano al más
+    /// cercano), después la moto, (0, 0), y después los de delante.
     public var puntos: [PuntoPlano]
-    /// Índice del próximo giro en `puntos`, o nil.
+    /// Índice del próximo giro en `puntos` (con movimiento, contando los de
+    /// detrás), o nil.
     public var giro: Int?
     /// Escala (v0.6, bits 1-2 de los flags): 0 la ajusta el dispositivo al
     /// tramo; 1 = 250 m, 2 = 500 m y 3 = 1000 m desde la moto hasta el borde de
     /// arriba del dibujo (Trazo.nivel).
     public var escala: UInt8
+    /// Formato con movimiento (v0.9, bit 3 de los flags): solo para un
+    /// dispositivo que anuncie el bit 10 de capacidades.
+    public var movimiento: Bool
+    /// Con movimiento: metros de ruta desde su inicio hasta la moto; viajan en
+    /// decímetros. Sin movimiento no viaja (0).
+    public var recorrido: Double
+    /// Con movimiento: cuántos puntos de `puntos` van por detrás de la moto (la
+    /// moto está en ese índice). Sin movimiento, 0.
+    public var atras: Int
 
-    public init(secuencia: UInt8, puntos: [PuntoPlano], giro: Int?, escala: UInt8 = 0) {
+    public init(secuencia: UInt8, puntos: [PuntoPlano], giro: Int?, escala: UInt8 = 0,
+                movimiento: Bool = false, recorrido: Double = 0, atras: Int = 0) {
         self.secuencia = secuencia
         self.puntos = puntos
         self.giro = giro
         self.escala = escala
+        self.movimiento = movimiento
+        self.recorrido = recorrido
+        self.atras = atras
     }
 
     /// Cuántos puntos caben en `maximo` bytes (lo que admite la conexión), sin
-    /// pasar de 44.
-    public static func puntosQueCaben(_ maximo: Int) -> Int {
-        max(0, min(maximoPuntos, (maximo - longitudMinima) / 4))
+    /// pasar de 44; con movimiento (v0.9), con 9 bytes de cabecera y sin pasar
+    /// de 42.
+    public static func puntosQueCaben(_ maximo: Int, movimiento: Bool = false) -> Int {
+        if movimiento {
+            return max(0, min(maximoPuntosMovimiento, (maximo - longitudMinimaMovimiento) / 4))
+        }
+        return max(0, min(maximoPuntos, (maximo - longitudMinima) / 4))
     }
 
     /// Bytes del mensaje, sin pasar de `maximo`: si no caben todos los puntos,
     /// se mandan los primeros (el tramo se acorta). Las coordenadas se
     /// redondean al metro y se saturan en ±32 767. Una escala mayor que 3 va
     /// como 3; sin tramo, los flags van a cero, sin escala (supuesto).
+    /// Con movimiento (v0.9), ver `codificarConMovimiento`.
     public func codificar(maximo: Int = longitudMinima + 4 * maximoPuntos) -> [UInt8] {
+        if movimiento {
+            return codificarConMovimiento(maximo: maximo)
+        }
         let caben = Self.puntosQueCaben(maximo)
         let lista = Array(puntos.prefix(caben))
         let hay = lista.count >= 2
@@ -459,13 +517,59 @@ public struct MensajeTrazo: Equatable {
         return bytes
     }
 
+    /// Con movimiento (v0.9): flags con el bit 3, giro sobre la lista entera,
+    /// recorrido en decímetros (u32, redondeado y saturado; lo que no es
+    /// finito, 0), cuántos van detrás y los puntos. Sin pasar de `maximo` ni de
+    /// 42 puntos; si no caben todos, se dejan primero los de delante (la moto
+    /// incluida): se quitan los de detrás más lejanos y, si aún no caben, los
+    /// últimos de delante. Más de 10 por detrás: se quitan los más lejanos. Un
+    /// giro que quede fuera va como 255. Sin tramo (menos de dos puntos, o
+    /// `atras` fuera de la lista), el mensaje sin tramo de siempre, de 4 bytes
+    /// (supuesto: así lo entiende cualquier dispositivo).
+    func codificarConMovimiento(maximo: Int) -> [UInt8] {
+        let caben = Self.puntosQueCaben(maximo, movimiento: true)
+        let detras = max(0, atras)
+        guard detras < puntos.count else {
+            return [Protocolo.version, secuencia, 0x00, 255]
+        }
+        // La moto y los de delante, y los de detrás que quepan, los más cercanos
+        let delante = puntos.count - detras
+        let quedanDelante = min(delante, caben)
+        let quedanDetras = min(detras, Self.maximoAtras, caben - quedanDelante)
+        let primero = detras - quedanDetras
+        let lista = Array(puntos[primero..<(detras + quedanDelante)])
+        guard lista.count >= 2 else {
+            return [Protocolo.version, secuencia, 0x00, 255]
+        }
+        let indiceGiro: UInt8
+        if let giro, giro - primero >= 0, giro - primero < lista.count {
+            indiceGiro = UInt8(giro - primero)
+        } else {
+            indiceGiro = 255
+        }
+        let flags: UInt8 = 0x01 | min(escala, 3) << 1 | Self.banderaMovimiento
+        var bytes: [UInt8] = [Protocolo.version, secuencia, flags, indiceGiro]
+        bytes.anadirU32(u32Saturado(recorrido * 10))
+        bytes.append(UInt8(quedanDetras))
+        for punto in lista {
+            bytes.anadirU16(metrosI16(punto.x))
+            bytes.anadirU16(metrosI16(punto.y))
+        }
+        return bytes
+    }
+
     /// Descarta lo corto y otra versión. Sin el bit 0, o con menos de dos
-    /// puntos, sin tramo (puntos vacíos y escala 0).
+    /// puntos, sin tramo (puntos vacíos y escala 0). Con el bit 3 (v0.9), el
+    /// formato con movimiento: se descarta si tiene menos de 9 bytes; un
+    /// `atrás` de más de 10 o que deja la moto fuera de los puntos que han
+    /// llegado se lee como sin tramo (supuesto).
     public static func decodificar(_ bytes: [UInt8]) -> MensajeTrazo? {
         guard bytes.count >= longitudMinima, bytes[0] == Protocolo.version else { return nil }
+        let conMovimiento = bytes[2] & banderaMovimiento != 0
+        if conMovimiento && bytes.count < longitudMinimaMovimiento { return nil }
         var puntos: [PuntoPlano] = []
         if bytes[2] & 0x01 != 0 {
-            var i = longitudMinima
+            var i = conMovimiento ? longitudMinimaMovimiento : longitudMinima
             while i + 3 < bytes.count {
                 let x = Int16(bitPattern: leerU16(bytes, i))
                 let y = Int16(bitPattern: leerU16(bytes, i + 2))
@@ -473,10 +577,19 @@ public struct MensajeTrazo: Equatable {
                 i += 4
             }
         }
+        var atras = 0
+        var recorrido = 0.0
+        if conMovimiento {
+            recorrido = Double(leerU32(bytes, 4)) / 10
+            atras = Int(bytes[8])
+            if atras > maximoAtras || atras >= puntos.count { puntos = [] }
+        }
         if puntos.count < 2 { puntos = [] }
+        if puntos.isEmpty { atras = 0 }
         let giro: Int? = (bytes[3] == 255 || Int(bytes[3]) >= puntos.count) ? nil : Int(bytes[3])
         let escala: UInt8 = puntos.isEmpty ? 0 : (bytes[2] >> 1) & 0x03
-        return MensajeTrazo(secuencia: bytes[1], puntos: puntos, giro: giro, escala: escala)
+        return MensajeTrazo(secuencia: bytes[1], puntos: puntos, giro: giro, escala: escala,
+                            movimiento: conMovimiento, recorrido: recorrido, atras: atras)
     }
 }
 
@@ -641,6 +754,10 @@ public struct Capacidades: OptionSet, Equatable {
     /// El dispositivo dibuja los anillos de las rotondas que van tras las
     /// calles de CRUCES (v0.8, §7 quater).
     public static let anillos = Capacidades(rawValue: 1 << 9)
+    /// El dispositivo acepta TRAZO con movimiento (el recorrido de la moto y
+    /// los puntos de detrás) y mueve el dibujo él solo entre mensajes (v0.9,
+    /// §7 ter).
+    public static let movimiento = Capacidades(rawValue: 1 << 10)
 }
 
 public struct DeviceInfo: Equatable {

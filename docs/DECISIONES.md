@@ -637,6 +637,66 @@ final.
   - **Sin probar:** sin compilar en local; las pruebas nuevas corren en el
     CI. Sin probar en el iPhone ni en la moto.
 
+### 2026-10-09 · Trazo con movimiento, fase 1 de la suavidad (0.13.0)
+
+- **Petición del autor:** el dibujo del cuadro «se siente a trompicones»:
+  cambia una vez por segundo, con cada `TRAZO`.
+- **Fase 1 (protocolo v0.9, `PROTOCOLO.md` §7 ter, «Con movimiento»):** el
+  cuadro mueve él solo la moto por el tramo entre un mensaje y otro y corrige
+  poco a poco al llegar el siguiente; para eso la app le dice dónde va la moto
+  en la ruta y le da tramo de sobra. La fase 2 (la ruta entera en el cuadro)
+  vendrá aparte.
+- **Qué hace la app, solo con un cuadro que anuncia el bit 10 de
+  capacidades** (si no, el `TRAZO` de siempre):
+  - manda `TRAZO` con el bit 3 de los flags: el recorrido de la moto (metros
+    de ruta desde su inicio, en decímetros, `u32`), cuántos puntos van detrás
+    y la lista entera (detrás, la moto y delante); el giro cuenta los de
+    detrás;
+  - por delante, los metros del nivel de escala (1,25 veces) más 100 m;
+  - por detrás, hasta 150 m de la ruta ya hecha, como mucho 10 puntos,
+    simplificados como los de delante y en los mismos ejes (la moto en el
+    origen y el sentido de la marcha hacia arriba);
+  - como mucho 42 puntos y lo que admita la conexión (9 bytes de cabecera);
+    los de delante tienen prioridad: si no cabe todo, los de detrás se
+    simplifican más y, si aún no caben, se quedan los más cercanos;
+  - `CRUCES` no cambia: las calles y los anillos van en los mismos ejes (la
+    moto en el origen). La ventana en la que se buscan llega hasta el final
+    del tramo que se manda, así que con movimiento llega 100 m más lejos.
+- **De dónde sale lo ya hecho.** Ferrostar solo da los pasos que quedan. Los
+  hechos salen de su ruta (`FerrostarCore.route`), que, según su código de la
+  0.57.0 (consultado el 2026-10-09), cambia sola al recalcular si no hay
+  delegado (la app no lo usa). Son los primeros de la ruta, por número (como
+  la vía siguiente); la app comprueba que el paso actual de la ruta coincide
+  con el primero de los que quedan y, si no (por ejemplo, justo al cambiar de
+  ruta), manda ese `TRAZO` en el formato de siempre.
+- **Recorrido:** la suma de las distancias de los pasos hechos más lo hecho
+  del actual (su distancia menos lo que falta para la maniobra, entre 0 y su
+  distancia). Viene a ser la longitud de la ruta menos lo que falta
+  (`distanceRemaining`), sin mezclar la longitud de la ruta con la de los
+  pasos. Con una ruta nueva o recalculada vuelve a empezar, porque es otra
+  ruta.
+- **La app 0.13.0 necesita el firmware del cuadro 0.5.0, con el bit 10
+  (capacidades 0x07EF), para el movimiento.** Con un cuadro anterior, todo
+  como en la 0.12.1. La pestaña Placa enseña si la placa lo admite
+  («Movimiento suave»).
+- **Supuestos de la implementación:**
+  - sin tramo se manda el `TRAZO` sin tramo de siempre, de 4 bytes (`01 ss 00
+    FF`), también a un cuadro con movimiento: lo entiende cualquiera;
+  - al leer (las pruebas, y como referencia para el cuadro), un `atrás` de
+    más de 10 o que deja la moto fuera de los puntos llegados se lee como sin
+    tramo;
+  - el recorrido no tiene valor de desconocido en el protocolo: se satura en
+    `FF FF FF FF` y lo que no es finito va como 0;
+  - que el recorrido de Ferrostar y la distancia a lo largo de los puntos
+    casan lo bastante para que el cuadro corrija sin saltos: Ferrostar mide
+    lo que falta del paso con otra fórmula (Haversine), y la diferencia con la
+    proyección local de la app es del orden de un 0,1 % (sin medir en ruta).
+- **Sin probar:** sin compilar en local (no hay Swift en Windows); las
+  pruebas de `Core` corren en el CI. Sin probar en el iPhone ni en la moto, y
+  sin un cuadro con el firmware 0.5.0.
+- **Cuadro:** se hace en su proyecto (el código no entra en este
+  repositorio).
+
 ### 2026-10-09 · Navegación: servidores, buscador y Ferrostar
 
 - **Origen:** el autor propuso usar lo mismo que la web

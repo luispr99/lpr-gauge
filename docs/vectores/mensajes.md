@@ -1,7 +1,7 @@
 # Vectores de prueba del protocolo
 
 Ejemplos de mensajes con sus bytes exactos, en hexadecimal y en el orden en que
-viajan. Salen de [PROTOCOLO.md](../PROTOCOLO.md) (v0.8). Las pruebas de `Core`
+viajan. Salen de [PROTOCOLO.md](../PROTOCOLO.md) (v0.9). Las pruebas de `Core`
 (`Core/Tests/LPRCoreTests/MensajesTests.swift`) comprueban estos mismos bytes; el
 firmware y la app de Android deberán pasar los mismos. Si cambia un vector,
 cambian a la vez el documento, las pruebas y este fichero.
@@ -99,6 +99,38 @@ medianoche y longitud del paso (todos `u16`).
   0). `01 02 05 01 00 00 00 00 00 00 64 00` es el tramo (0, 0), (0, 100) con el
   giro en el punto 1 y escala 2.
 
+### `TRAZO` con movimiento (v0.9)
+
+Solo para un dispositivo con el bit 10 de capacidades. Flags con el bit 3;
+giro sobre la lista entera; recorrido en decímetros (`u32`); cuántos puntos
+van detrás; y los puntos: los de detrás (del más lejano al más cercano), la
+moto (0, 0) y los de delante.
+
+| Caso | Bytes |
+|---|---|
+| Secuencia 3, escala 2, recorrido 1234,5 m (12 345 dm): detrás (0, −120) y (−5, −60); la moto; delante (0, 100), el giro (índice 3), y (−30, 150) | `01 03 0D 03 39 30 00 00 02 00 00 88 FF FB FF C4 FF 00 00 00 00 00 00 64 00 E2 FF 96 00` |
+| Secuencia 0, al salir: escala 3, recorrido 0, nada detrás; la moto y el giro en (0, 250) | `01 00 0F 01 00 00 00 00 00 00 00 00 00 00 00 FA 00` |
+| Secuencia 16, escala 1, sin giro, recorrido 123 456,7 m (1 234 567 dm): detrás (3, −40); la moto; delante (0, 312) | `01 10 0B FF 87 D6 12 00 01 03 00 D8 FF 00 00 00 00 00 00 38 01` |
+
+- Flags con tramo y movimiento: escala 0 `09`, 1 `0B`, 2 `0D`, 3 `0F`.
+- El recorrido se redondea al decímetro (0,04 m va como 0 y 0,05 m como 1
+  dm) y se satura en `FF FF FF FF` (429 496 729,5 m o más); negativo, o lo
+  que no es finito, va como 0.
+- Como mucho 42 puntos (177 bytes) y 10 por detrás. Si no caben, se dejan
+  primero los de delante: con 20 bytes por escritura caben 2 puntos y el
+  primer caso va como `01 03 0D 01 39 30 00 00 00 00 00 00 00 00 00 64 00` (la
+  moto y el primero de delante; el giro pasa al índice 1); con 25 bytes, 4
+  puntos, con el de detrás más cercano (−5, −60). Con más de 10 por detrás se
+  quitan los más lejanos. Un giro que queda fuera va como 255.
+- Sin tramo, el mensaje sin tramo de siempre, de 4 bytes (`01 05 00 FF`),
+  también si `atrás` deja la moto fuera de la lista o si queda un solo punto.
+- Al decodificar: con el bit 3, se descarta un mensaje de menos de 9 bytes
+  (`01 03 0D 03 39 30 00 00`); sin el bit 0 no hay tramo, pero se lee el
+  recorrido (`01 05 08 FF 0A 00 00 00 00`: 1 m); un `atrás` de más de 10 o que
+  deja la moto fuera de los puntos que han llegado se lee como sin tramo
+  (`01 00 09 FF 00 00 00 00 02 00 00 00 00 00 00 64 00`). Sin el bit 3, el
+  formato de arriba, sin cambios.
+
 ## `CRUCES`
 
 | Caso | Bytes |
@@ -150,5 +182,6 @@ medianoche y longitud del paso (todos `u16`).
 | Cuadro con el trazo y MOVIL al cambiar | `01 01 EC 00 00 00 02 00` | 1 | `STATUS` + `NAV_TEXT` + `MOVIL` + `TRAZO` + MOVIL al cambiar (0x00EC) | sin límite | 0.2.0 |
 | Cuadro con `NAV`, `GPS` y `CRUCES` | `01 01 EF 01 00 00 03 00` | 1 | `NAV` + `GPS` + `STATUS` + `NAV_TEXT` + `MOVIL` + `TRAZO` + MOVIL al cambiar + `CRUCES` (0x01EF) | sin límite | 0.3.0 |
 | Cuadro con todo, también los anillos (v0.8) | `01 01 EF 03 00 00 04 00` | 1 | las de 0.3.0 + anillos (0x03EF) | sin límite | 0.4.0 |
+| Cuadro con todo, también el movimiento (v0.9) | `01 01 EF 07 00 00 05 00` | 1 | las de 0.4.0 + movimiento (0x07EF) | sin límite | 0.5.0 |
 
 - Se descarta cualquier mensaje de menos de 8 bytes.

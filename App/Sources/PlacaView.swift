@@ -116,6 +116,9 @@ struct PlacaView: View {
                     LabeledContent("Anillos de las rotondas") {
                         Text(enlace.admiteAnillos ? "Con los cruces" : "La placa no los dibuja")
                     }
+                    LabeledContent("Movimiento suave") {
+                        Text(enlace.admiteMovimiento ? "Con el tramo" : "La placa no lo admite")
+                    }
                 } header: {
                     Text("Recorrido en el cuadro")
                 } footer: {

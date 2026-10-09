@@ -13,21 +13,28 @@ public struct PuntoPlano: Equatable {
 
 /// Un tramo listo para el cuadro (Trazo.tramo).
 public struct TramoTrazo: Equatable {
-    /// Simplificado y en los ejes de la moto (TRAZO).
+    /// Simplificado y en los ejes de la moto (TRAZO). Con movimiento (v0.9),
+    /// primero los `atras` de detrás, del más lejano al más cercano; después
+    /// la moto, (0, 0), y los de delante.
     public var puntos: [PuntoPlano]
-    /// Índice del próximo giro en `puntos`, o nil.
+    /// Índice del próximo giro en `puntos` (contando los de detrás), o nil.
     public var giro: Int?
-    /// La misma ruta sin simplificar, en grados, desde la posición de la moto
-    /// (el primer punto): para buscar los cruces del tramo (Cruces.calles).
+    /// La ruta por delante sin simplificar, en grados, desde la posición de la
+    /// moto (el primer punto): para buscar los cruces del tramo
+    /// (Cruces.calles). Sin los puntos de detrás.
     public var ruta: [PuntoRuta]
     /// El sentido de la marcha de los ejes de la moto, en grados desde el norte.
     public var sentido: Double
+    /// Cuántos puntos de `puntos` van por detrás de la moto (v0.9): la moto
+    /// está en ese índice. 0 sin movimiento.
+    public var atras: Int
 
-    public init(puntos: [PuntoPlano], giro: Int?, ruta: [PuntoRuta], sentido: Double) {
+    public init(puntos: [PuntoPlano], giro: Int?, ruta: [PuntoRuta], sentido: Double, atras: Int = 0) {
         self.puntos = puntos
         self.giro = giro
         self.ruta = ruta
         self.sentido = sentido
+        self.atras = atras
     }
 }
 
@@ -54,6 +61,20 @@ public enum Trazo {
     /// para que el tramo llegue hasta arriba del dibujo.
     public static func metrosTramo(nivel: Int) -> Double {
         metros(nivel: nivel) * 1.25
+    }
+
+    // MARK: Con movimiento (§7 ter, v0.9)
+
+    /// Metros de margen por delante con movimiento: el dispositivo avanza la
+    /// moto él solo entre mensajes y no debe quedarse sin tramo.
+    public static let margenMovimiento = 100.0
+    /// Metros de ruta ya recorrida que se mandan por detrás de la moto.
+    public static let metrosDetras = 150.0
+
+    /// Metros de ruta por delante con movimiento: los del nivel
+    /// (`metrosTramo`) más el margen de 100 m.
+    public static func metrosTramoConMovimiento(nivel: Int) -> Double {
+        metrosTramo(nivel: nivel) + margenMovimiento
     }
 
     /// El nivel de escala según los metros que faltan para la maniobra: más de
@@ -110,6 +131,50 @@ public enum Trazo {
             let inicio = numero == 0 ? (indice.map { $0 + 1 } ?? paso.count) : 0
             guard inicio >= 0, inicio < paso.count else { continue }
             for punto in paso[inicio...] {
+                let tramo = distancia(previo, punto)
+                if tramo < 0.5 { continue }
+                if acumulado + tramo >= total {
+                    let t = (total - acumulado) / tramo
+                    salida.append(PuntoRuta(
+                        latitud: previo.latitud + (punto.latitud - previo.latitud) * t,
+                        longitud: previo.longitud + (punto.longitud - previo.longitud) * t
+                    ))
+                    return salida
+                }
+                salida.append(punto)
+                acumulado += tramo
+                previo = punto
+            }
+        }
+        return salida
+    }
+
+    /// La ruta ya recorrida, desde `origen` (la posición de la moto sobre el
+    /// paso `actual`) hacia atrás, hasta `metros` por detrás (TRAZO con
+    /// movimiento, v0.9). Como `recorrer`, pero al revés: del paso actual, del
+    /// punto `indice` (el origen del segmento en el que está la moto) al
+    /// primero; nil: el paso no sirve y se sigue por los anteriores. Después,
+    /// los pasos `anteriores` (en el orden de la ruta), del último al primero,
+    /// cada uno del final al principio. Sin el origen, sin puntos repetidos (a
+    /// menos de 0,5 m) y con el último interpolado para cortar justo en
+    /// `metros`, salvo que la ruta empiece antes. El primero que devuelve es el
+    /// más cercano a la moto.
+    public static func recorrerAtras(anteriores: [[PuntoRuta]], actual: [PuntoRuta]?, indice: Int?,
+                                     desde origen: PuntoRuta, metros total: Double) -> [PuntoRuta] {
+        guard total > 0 else { return [] }
+        var hacia: [[PuntoRuta]] = []
+        if let actual, let indice, indice >= 0, !actual.isEmpty {
+            let fin = min(indice, actual.count - 1)
+            hacia.append(Array(actual[0...fin].reversed()))
+        }
+        for paso in anteriores.reversed() {
+            hacia.append(Array(paso.reversed()))
+        }
+        var salida: [PuntoRuta] = []
+        var previo = origen
+        var acumulado = 0.0
+        for paso in hacia {
+            for punto in paso {
                 let tramo = distancia(previo, punto)
                 if tramo < 0.5 { continue }
                 if acumulado + tramo >= total {
@@ -190,7 +255,15 @@ public enum Trazo {
     /// Douglas-Peucker lo quitaría (lo vio la revisión de la 0.9.1).
     /// Devuelve también la ruta sin simplificar y el sentido de la marcha,
     /// para poner los cruces en los mismos ejes (CRUCES, v0.6).
-    /// Nil si no hay al menos dos puntos.
+    /// Con movimiento (v0.9, `anteriores` no nil: los pasos de la ruta ya
+    /// hechos, en orden), además hasta `metrosAtras` de la ruta ya recorrida
+    /// por detrás de la moto (`recorrerAtras`), en los mismos ejes y
+    /// simplificados igual, como mucho `maximoAtras` puntos y delante de los
+    /// demás en la lista; el giro cuenta también los de detrás. Los de delante
+    /// tienen prioridad: los de detrás solo ocupan el sitio que les dejen
+    /// dentro de `maximoPuntos` (se simplifican más o, si no, se quedan los
+    /// más cercanos a la moto).
+    /// Nil si no hay al menos dos puntos por delante (la moto incluida).
     public static func tramo(
         pasos: [[PuntoRuta]],
         indice: Int?,
@@ -198,7 +271,10 @@ public enum Trazo {
         metros total: Double,
         giro: PuntoRuta?,
         anticipacion: Double = 25,
-        maximoPuntos: Int = MensajeTrazo.maximoPuntos
+        maximoPuntos: Int = MensajeTrazo.maximoPuntos,
+        anteriores: [[PuntoRuta]]? = nil,
+        metrosAtras: Double = Trazo.metrosDetras,
+        maximoAtras: Int = MensajeTrazo.maximoAtras
     ) -> TramoTrazo? {
         let ruta = recorrer(pasos: pasos, indice: indice, desde: origen, metros: total)
         guard ruta.count >= 2 else { return nil }
@@ -233,8 +309,34 @@ public enum Trazo {
             puntos = Array(puntos.prefix(limite))
             if let g = indiceGiro, g >= limite { indiceGiro = nil }
         }
-        return TramoTrazo(puntos: aEjesMoto(puntos, origen: origen, rumbo: sentido), giro: indiceGiro,
-                          ruta: ruta, sentido: sentido)
+
+        // Con movimiento, los de detrás, en el sitio que dejan los de delante
+        var detras: [PuntoRuta] = []
+        if let anteriores {
+            let huecos = min(max(0, maximoAtras), limite - puntos.count)
+            let atrasRuta = huecos > 0
+                ? recorrerAtras(anteriores: anteriores, actual: pasos.first, indice: indice, desde: origen,
+                                metros: metrosAtras)
+                : []
+            if !atrasRuta.isEmpty {
+                // Con la moto delante, para que la simplificación la conserve
+                let conMoto = [origen] + atrasRuta
+                var toleranciaAtras = 2.0
+                var simpleAtras = Simplificar.douglasPeucker(conMoto, tolerancia: toleranciaAtras)
+                var intentosAtras = 0
+                while simpleAtras.count - 1 > huecos && intentosAtras < 40 {
+                    toleranciaAtras *= 1.5
+                    simpleAtras = Simplificar.douglasPeucker(conMoto, tolerancia: toleranciaAtras)
+                    intentosAtras += 1
+                }
+                // Sin la moto; si aún sobran, los más cercanos. Del más lejano
+                // al más cercano
+                detras = Array(simpleAtras.dropFirst().prefix(huecos).reversed())
+            }
+        }
+        return TramoTrazo(puntos: aEjesMoto(detras + puntos, origen: origen, rumbo: sentido),
+                          giro: indiceGiro.map { $0 + detras.count },
+                          ruta: ruta, sentido: sentido, atras: detras.count)
     }
 
     /// Douglas-Peucker sin perder el punto `conservando` (el giro): se

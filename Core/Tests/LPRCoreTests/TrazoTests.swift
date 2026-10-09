@@ -173,5 +173,135 @@ final class TrazoTests: XCTestCase {
         // Se mandan 1,25 veces, para que el tramo llegue hasta arriba
         XCTAssertEqual(Trazo.metrosTramo(nivel: 1), 312.5)
         XCTAssertEqual(Trazo.metrosTramo(nivel: 3), 1_250)
+        // Con movimiento (v0.9), 100 m más
+        XCTAssertEqual(Trazo.metrosTramoConMovimiento(nivel: 1), 412.5)
+        XCTAssertEqual(Trazo.metrosTramoConMovimiento(nivel: 3), 1_350)
+    }
+
+    // MARK: Con movimiento (v0.9)
+
+    func testRecorrerAtrasCortaEnLosMetros() {
+        // Un paso hacia el norte con puntos cada 100 m; la moto en el segundo segmento
+        let norte = (0...3).map { punto(0, Double($0) * 100) }
+        let atras = Trazo.recorrerAtras(anteriores: [], actual: norte, indice: 1, desde: punto(0, 150), metros: 80)
+        // El de 100 m y el cortado en 70 m
+        XCTAssertEqual(atras.count, 2)
+        XCTAssertEqual(Trazo.distancia(atras[0], punto(0, 100)), 0, accuracy: 0.5)
+        XCTAssertEqual(Trazo.distancia(atras[1], punto(0, 70)), 0, accuracy: 0.5)
+        // Al principio de la ruta, hasta donde empieza
+        let todo = Trazo.recorrerAtras(anteriores: [], actual: norte, indice: 1, desde: punto(0, 150), metros: 1_000)
+        XCTAssertEqual(todo.count, 2)
+        XCTAssertEqual(Trazo.distancia(todo[1], punto(0, 0)), 0, accuracy: 0.5)
+        XCTAssertEqual(Trazo.recorrerAtras(anteriores: [], actual: norte, indice: 1, desde: punto(0, 150), metros: 0),
+                       [])
+    }
+
+    func testRecorrerAtrasPasaAlPasoAnteriorSinRepetir() {
+        // El paso anterior va hacia el este y acaba en (0, 0), donde empieza el
+        // actual, hacia el norte
+        let este = (0...3).map { punto(Double($0 - 3) * 100, 0) }
+        let norte = (0...3).map { punto(0, Double($0) * 100) }
+        let atras = Trazo.recorrerAtras(anteriores: [este], actual: norte, indice: 1, desde: punto(0, 150),
+                                        metros: 200)
+        // (0, 100), (0, 0) una sola vez y el cortado en (-50, 0)
+        XCTAssertEqual(atras.count, 3)
+        XCTAssertEqual(Trazo.distancia(atras[1], punto(0, 0)), 0, accuracy: 0.5)
+        XCTAssertEqual(Trazo.distancia(atras[2], punto(-50, 0)), 0, accuracy: 0.5)
+        // Sin índice: el paso actual no sirve y se sigue por el anterior
+        let sinIndice = Trazo.recorrerAtras(anteriores: [este], actual: norte, indice: nil, desde: punto(0, 20),
+                                            metros: 70)
+        XCTAssertEqual(sinIndice.count, 2)
+        XCTAssertEqual(Trazo.distancia(sinIndice[0], punto(0, 0)), 0, accuracy: 0.5)
+        XCTAssertEqual(Trazo.distancia(sinIndice[1], punto(-50, 0)), 0, accuracy: 0.5)
+    }
+
+    func testTramoConMovimiento() {
+        // Como testTramoConGiro, con la ruta hecha: el paso anterior, hacia el
+        // este, acaba donde empieza el actual
+        let este = (0...3).map { punto(Double($0 - 3) * 100, 0) }
+        let norte = (0...3).map { punto(0, Double($0) * 100) }
+        let salida = (0...4).map { punto(Double($0) * 100, 300) }
+        let tramo = try! XCTUnwrap(Trazo.tramo(pasos: [norte, salida], indice: 0, desde: punto(0, 50),
+                                               metros: 500, giro: punto(0, 300), anteriores: [este]))
+        // 150 m por detrás: la esquina (0, 0) y el corte en (-100, 0); del más
+        // lejano al más cercano, y después la moto, el giro y el final
+        XCTAssertEqual(tramo.atras, 2)
+        XCTAssertEqual(tramo.puntos.count, 5)
+        XCTAssertEqual(tramo.puntos[0].x, -100, accuracy: 0.5)
+        XCTAssertEqual(tramo.puntos[0].y, -50, accuracy: 0.5)
+        XCTAssertEqual(tramo.puntos[1].x, 0, accuracy: 0.5)
+        XCTAssertEqual(tramo.puntos[1].y, -50, accuracy: 0.5)
+        XCTAssertEqual(tramo.puntos[2].x, 0, accuracy: 0.01)
+        XCTAssertEqual(tramo.puntos[2].y, 0, accuracy: 0.01)
+        // El giro cuenta los de detrás
+        XCTAssertEqual(tramo.giro, 3)
+        XCTAssertEqual(tramo.puntos[3].y, 250, accuracy: 0.5)
+        XCTAssertEqual(tramo.puntos[4].x, 250, accuracy: 0.5)
+        // Los cruces, como siempre: la ruta desde la moto y el mismo sentido
+        XCTAssertEqual(tramo.ruta.count, 7)
+        XCTAssertEqual(tramo.ruta.first, punto(0, 50))
+        XCTAssertEqual(tramo.sentido, 0, accuracy: 0.1)
+        // Sin movimiento, nada detrás
+        let sinMovimiento = try! XCTUnwrap(Trazo.tramo(pasos: [norte, salida], indice: 0, desde: punto(0, 50),
+                                             metros: 500, giro: punto(0, 300)))
+        XCTAssertEqual(sinMovimiento.atras, 0)
+        XCTAssertEqual(sinMovimiento.giro, 1)
+        XCTAssertEqual(sinMovimiento.puntos.count, 3)
+    }
+
+    func testTramoConMovimientoDejaPrimeroLosDeDelante() {
+        let este = (0...3).map { punto(Double($0 - 3) * 100, 0) }
+        let norte = (0...3).map { punto(0, Double($0) * 100) }
+        let salida = (0...4).map { punto(Double($0) * 100, 300) }
+        // Con sitio para 4: los 3 de delante y uno detrás, más simplificado (la
+        // esquina se va y queda el corte)
+        let cuatro = try! XCTUnwrap(Trazo.tramo(pasos: [norte, salida], indice: 0, desde: punto(0, 50),
+                                                metros: 500, giro: punto(0, 300), maximoPuntos: 4,
+                                                anteriores: [este]))
+        XCTAssertEqual(cuatro.atras, 1)
+        XCTAssertEqual(cuatro.puntos.count, 4)
+        XCTAssertEqual(cuatro.puntos[0].x, -100, accuracy: 0.5)
+        XCTAssertEqual(cuatro.puntos[0].y, -50, accuracy: 0.5)
+        XCTAssertEqual(cuatro.giro, 2)
+        // Con sitio para 3: ninguno detrás
+        let tres = try! XCTUnwrap(Trazo.tramo(pasos: [norte, salida], indice: 0, desde: punto(0, 50),
+                                              metros: 500, giro: punto(0, 300), maximoPuntos: 3,
+                                              anteriores: [este]))
+        XCTAssertEqual(tres.atras, 0)
+        XCTAssertEqual(tres.puntos.count, 3)
+        XCTAssertEqual(tres.giro, 1)
+    }
+
+    func testTramoConMovimientoAlEmpezarLaRuta() {
+        // Sin pasos hechos: solo el trozo del paso actual antes de la moto
+        let norte = (0...3).map { punto(0, Double($0) * 100) }
+        let tramo = try! XCTUnwrap(Trazo.tramo(pasos: [norte], indice: 0, desde: punto(0, 50), metros: 200,
+                                               giro: nil, anteriores: []))
+        XCTAssertEqual(tramo.atras, 1)
+        XCTAssertEqual(tramo.puntos[0].x, 0, accuracy: 0.5)
+        XCTAssertEqual(tramo.puntos[0].y, -50, accuracy: 0.5)
+        XCTAssertEqual(tramo.puntos[1].y, 0, accuracy: 0.01)
+        // La moto justo en el inicio: nada detrás
+        let alSalir = try! XCTUnwrap(Trazo.tramo(pasos: [norte], indice: 0, desde: punto(0, 0), metros: 200,
+                                                 giro: nil, anteriores: []))
+        XCTAssertEqual(alSalir.atras, 0)
+        XCTAssertEqual(alSalir.puntos[0].y, 0, accuracy: 0.01)
+    }
+
+    func testTramoConMovimientoComoMuchoDiezDetras() {
+        // Un zigzag de ±5 m cada 2 m por detrás: muchos más de 10 puntos en 150 m
+        let zigzag = (0...100).map { punto($0 % 2 == 0 ? -5 : 5, -200 + Double($0) * 2) } + [punto(0, 0)]
+        let norte = [punto(0, 0), punto(0, 100), punto(0, 200)]
+        let tramo = try! XCTUnwrap(Trazo.tramo(pasos: [norte], indice: 0, desde: punto(0, 5), metros: 100,
+                                               giro: nil, anteriores: [zigzag]))
+        XCTAssertGreaterThanOrEqual(tramo.atras, 1)
+        XCTAssertLessThanOrEqual(tramo.atras, MensajeTrazo.maximoAtras)
+        // La moto, en el índice `atras`, y los de detrás, por detrás
+        XCTAssertEqual(tramo.puntos[tramo.atras].x, 0, accuracy: 0.01)
+        XCTAssertEqual(tramo.puntos[tramo.atras].y, 0, accuracy: 0.01)
+        for detras in tramo.puntos.prefix(tramo.atras) {
+            XCTAssertLessThan(detras.y, 0)
+        }
+        XCTAssertEqual(tramo.puntos.count, tramo.atras + 2)
     }
 }

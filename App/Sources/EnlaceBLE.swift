@@ -6,9 +6,10 @@ import UIKit
 import LPRCore
 
 /// Enlace BLE con el cuadro o con el firmware de referencia (docs/PROTOCOLO.md,
-/// v0.6). Manda `MOVIL` (estado de la batería del iPhone; con el cuadro, solo al
+/// v0.9). Manda `MOVIL` (estado de la batería del iPhone; con el cuadro, solo al
 /// cambiar), `NAV_TEXT` (texto de la navegación), `NAV` (siguiente maniobra),
-/// `TRAZO` (tramo de ruta por delante) y, tras cada `TRAZO`, `CRUCES` (calles
+/// `TRAZO` (tramo de ruta por delante; con una placa que lo admite, con
+/// movimiento, v0.9) y, tras cada `TRAZO`, `CRUCES` (calles
 /// que salen del tramo), y lee `STATUS`. En segundo plano sigue con el modo
 /// `bluetooth-central`: cada `STATUS` despierta a la app y sirve de
 /// mantenimiento (§10). Sin restauración de estado.
@@ -565,6 +566,9 @@ final class EnlaceBLE: NSObject, ObservableObject {
         } else if !admiteAnillos {
             anotar("La placa no dibuja los anillos de las rotondas (CRUCES v0.8)")
         }
+        if conTrazo && !admiteMovimiento {
+            anotar("La placa no mueve el tramo ella sola (TRAZO v0.9): formato de siempre")
+        }
         if !conNav {
             anotar("La placa no admite NAV (siguiente maniobra)")
         }
@@ -821,6 +825,11 @@ final class EnlaceBLE: NSObject, ObservableObject {
     private var giroTrazo: Int?
     /// Nivel de escala (v0.6): 0 la ajusta la placa; 1-3, 250, 500 y 1000 m.
     private var escalaTrazo: UInt8 = 0
+    /// Con movimiento (v0.9): cuántos de `puntosTrazo` van por detrás de la
+    /// moto y los metros de ruta desde su inicio hasta la moto; nil, el
+    /// formato de siempre.
+    private var atrasTrazo = 0
+    private var recorridoTrazo: Double?
     /// Calles de los cruces del último tramo puesto, en sus mismos ejes.
     private var callesTrazo: [CalleCruce] = []
     /// Anillos de las rotondas del último tramo puesto (v0.8), en sus mismos
@@ -849,10 +858,19 @@ final class EnlaceBLE: NSObject, ObservableObject {
         admiteCruces && info?.capacidades.contains(.anillos) == true
     }
 
-    /// Cuántos puntos caben en un TRAZO con la conexión actual (como mucho, 44).
+    /// Si la placa conectada acepta TRAZO con movimiento (bit 10, v0.9; siempre
+    /// con TRAZO): mueve el dibujo ella sola entre mensajes. Si no, el formato
+    /// de siempre.
+    var admiteMovimiento: Bool {
+        admiteTrazo && info?.capacidades.contains(.movimiento) == true
+    }
+
+    /// Cuántos puntos caben en un TRAZO con la conexión actual (como mucho, 44;
+    /// con movimiento, 42, con los de detrás incluidos).
     var puntosTrazoQueCaben: Int {
         guard let periferico, estado == .conectado else { return MensajeTrazo.maximoPuntos }
-        return MensajeTrazo.puntosQueCaben(periferico.maximumWriteValueLength(for: .withoutResponse))
+        return MensajeTrazo.puntosQueCaben(periferico.maximumWriteValueLength(for: .withoutResponse),
+                                           movimiento: admiteMovimiento)
     }
 
     /// Cuántas calles caben en un CRUCES con la conexión actual (como mucho,
@@ -871,8 +889,13 @@ final class EnlaceBLE: NSObject, ObservableObject {
     /// sin tramo. Se manda al cambiar, como mucho una vez por segundo: lo que
     /// llegue antes queda guardado y sale en cuanto pase el segundo (mantener,
     /// cada 0,5 s); al dejar de haberlo, una vez sin tramo para borrarlo.
+    /// Con movimiento (v0.9): `atras`, cuántos puntos van por detrás de la
+    /// moto (los primeros de `puntos`), y `recorrido`, los metros de ruta desde
+    /// su inicio hasta la moto. Solo se manda así si la placa lo admite
+    /// (admiteMovimiento); si no, o sin recorrido, el formato de siempre, sin
+    /// los de detrás.
     func ponerTrazo(_ tramo: (puntos: [PuntoPlano], giro: Int?)?, escala: UInt8 = 0, calles: [CalleCruce] = [],
-                    anillos: [AnilloCruce] = []) {
+                    anillos: [AnilloCruce] = [], atras: Int = 0, recorrido: Double? = nil) {
         guard let tramo, tramo.puntos.count >= 2 else {
             guard trazoActivo else { return }
             trazoActivo = false
@@ -880,6 +903,8 @@ final class EnlaceBLE: NSObject, ObservableObject {
             puntosTrazo = []
             giroTrazo = nil
             escalaTrazo = 0
+            atrasTrazo = 0
+            recorridoTrazo = nil
             callesTrazo = []
             anillosTrazo = []
             enviarTrazo()
@@ -889,6 +914,8 @@ final class EnlaceBLE: NSObject, ObservableObject {
         puntosTrazo = tramo.puntos
         giroTrazo = tramo.giro
         escalaTrazo = escala
+        atrasTrazo = min(max(0, atras), tramo.puntos.count - 1)
+        recorridoTrazo = recorrido
         callesTrazo = calles
         anillosTrazo = anillos
         if nuevo { trazoActivo = true }
@@ -907,16 +934,28 @@ final class EnlaceBLE: NSObject, ObservableObject {
             return
         }
         trazoPendiente = false
-        let mensaje = MensajeTrazo(secuencia: secuenciaTrazo.siguiente(),
-                                   puntos: trazoActivo ? puntosTrazo : [], giro: giroTrazo, escala: escalaTrazo)
+        // Con movimiento (v0.9), si la placa lo admite y hay recorrido. Si no,
+        // el formato de siempre, que empieza en la moto: sin los de detrás (por
+        // si el tramo se calculó con otra placa conectada)
+        let conMovimiento = trazoActivo && admiteMovimiento && recorridoTrazo != nil
+        var puntos = trazoActivo ? puntosTrazo : []
+        var giro = giroTrazo
+        if trazoActivo && !conMovimiento && atrasTrazo > 0 {
+            let atras = atrasTrazo
+            puntos = Array(puntos.dropFirst(atras))
+            giro = giro.flatMap { g -> Int? in g >= atras ? g - atras : nil }
+        }
+        let mensaje = MensajeTrazo(secuencia: secuenciaTrazo.siguiente(), puntos: puntos, giro: giro,
+                                   escala: escalaTrazo, movimiento: conMovimiento,
+                                   recorrido: recorridoTrazo ?? 0, atras: conMovimiento ? atrasTrazo : 0)
         let bytes = mensaje.codificar(maximo: periferico.maximumWriteValueLength(for: .withoutResponse))
         periferico.writeValue(Data(bytes), for: caracTrazo, type: .withoutResponse)
         ultimoTrazo = Date()
         trazoNuevo = false
         if !primerTrazoAnotado {
             primerTrazoAnotado = true
-            // Sin los puntos: son la ruta que se sigue
-            anotar("TRAZO enviado (seq \(mensaje.secuencia), \(bytes.count) bytes)")
+            // Sin los puntos ni el recorrido: son la ruta que se sigue
+            anotar("TRAZO enviado (seq \(mensaje.secuencia), \(bytes.count) bytes\(conMovimiento ? ", con movimiento" : ""))")
         }
         // Justo después, sus cruces, con su secuencia (§7 quater). Sin tramo no
         // hacen falta: la placa no dibuja los de otro tramo

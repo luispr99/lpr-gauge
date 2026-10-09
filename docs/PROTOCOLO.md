@@ -1,6 +1,6 @@
 # Protocolo BLE móvil → cuadro
 
-> **Estado: borrador v0.8 (2026-10-09), sin validar.** Los puntos marcados
+> **Estado: borrador v0.9 (2026-10-09), sin validar.** Los puntos marcados
 > **[PENDIENTE]** faltan por completar. Mientras sea borrador, nada de lo que hay
 > aquí es definitivo y puede cambiar sin mantener compatibilidad. Los cambios de
 > cada versión están en la [sección 13](#13-cambios).
@@ -78,7 +78,7 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
 |---|---|---|---|
 | 0 | versión | u8 | Versión del protocolo del dispositivo: 1. |
 | 1 | tipo | u8 | 1 = cuadro de moto; 2 = firmware de referencia (solo serie). |
-| 2-3 | capacidades | u16 | Bit 0 `NAV`, bit 1 `GPS`, bit 2 `STATUS`, bit 3 `NAV_TEXT`, bit 4 `CONFIG`, bit 5 `MOVIL`, bit 6 `TRAZO`, bit 7 `MOVIL` al cambiar (sección 7), bit 8 `CRUCES`, bit 9 anillos: dibuja los anillos de las rotondas de `CRUCES` (sección 7 quater, v0.8). |
+| 2-3 | capacidades | u16 | Bit 0 `NAV`, bit 1 `GPS`, bit 2 `STATUS`, bit 3 `NAV_TEXT`, bit 4 `CONFIG`, bit 5 `MOVIL`, bit 6 `TRAZO`, bit 7 `MOVIL` al cambiar (sección 7), bit 8 `CRUCES`, bit 9 anillos: dibuja los anillos de las rotondas de `CRUCES` (sección 7 quater, v0.8), bit 10 movimiento: acepta `TRAZO` con la posición en la ruta y los puntos de detrás, y mueve el dibujo él solo entre mensajes (sección 7 ter, v0.9). |
 | 4 | frecuencia máxima | u8 | Mensajes por segundo y característica que acepta (0 = sin límite). |
 | 5-7 | versión de firmware | u8 × 3 | Mayor, menor, parche. |
 
@@ -236,6 +236,49 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
   que llegue antes sale en cuanto pasa el segundo), y lo repite a los 1,5-2 s
   mientras haya tramo. Al dejar de haberlo manda uno con el
   bit 0 a cero. El dispositivo lo da por caducado a los 5 s.
+
+### Con movimiento (v0.9, bit 10 de capacidades)
+
+Para que el dibujo vaya suave (a petición del autor el 2026-10-09: «se siente a
+trompicones»), el dispositivo mueve él solo la moto por el tramo entre un
+mensaje y otro, con la velocidad del GPS, y cuando llega el siguiente corrige
+poco a poco la diferencia. Para eso necesita saber dónde está la moto en la
+ruta y tener tramo de sobra. Además dibuja en gris oscuro el camino que ya se
+ha hecho. Solo si el dispositivo anuncia el bit 10; si no, la app manda el
+formato de arriba.
+
+| Byte | Campo | Tipo | Descripción |
+|---|---|---|---|
+| 0 | versión | u8 | 1 |
+| 1 | secuencia | u8 | |
+| 2 | flags | u8 | Como arriba, con el bit 3 a uno: formato con movimiento. |
+| 3 | giro | u8 | Índice del próximo giro en la lista entera de puntos (los de detrás incluidos); 255 si no está. |
+| 4-7 | recorrido | u32 | Decímetros de ruta desde su inicio hasta la moto (el punto `atrás`). Con una ruta nueva (o recalculada) vuelve a empezar. |
+| 8 | atrás | u8 | Cuántos puntos van por detrás de la moto, de 0 a 10. |
+| 9… | puntos | (i16, i16) × n | Primero los de detrás, del más lejano al más cercano; después la moto, (0, 0), en el índice `atrás`; después los de delante. Ejes y unidades como arriba. |
+
+- Longitud mínima: 9 bytes. Como mucho 42 puntos (177 bytes); la app
+  simplifica para que quepan, dejando primero sitio a los de delante.
+- **Delante:** la app manda 1,25 veces los metros del nivel más 100 m de
+  margen, para que el dispositivo pueda seguir avanzando unos segundos sin
+  quedarse sin tramo.
+- **Detrás:** hasta 150 m de la ruta ya recorrida (como mucho 10 puntos).
+- **Qué hace el dispositivo:**
+  - Entre mensajes avanza la moto por la línea de puntos a la velocidad del
+    último `GPS` (bit 2 y campo de velocidad); sin ella, con la que sale del
+    recorrido entre los dos últimos `TRAZO`. Como mucho 2 s después del
+    último mensaje y nunca más allá del último punto.
+  - El sentido de la marcha lo saca de la misma forma que la app: el rumbo
+    de la cuerda hasta 25 m por delante, sin pasar del giro (a menos de 3 m
+    del giro, el del último segmento antes de él). El giro del dibujo y los
+    cambios de escala los suaviza.
+  - Con un `TRAZO` nuevo, la diferencia entre donde creía que iba la moto y
+    donde dice el recorrido nuevo (en metros a lo largo de la ruta) se
+    reparte en medio segundo. Si es de más de 50 m, o el recorrido baja más
+    de 20 m (ruta nueva o recalculada), salta sin animar.
+  - Los cruces y los anillos de `CRUCES` van en los ejes de su `TRAZO` (la
+    moto en el punto `atrás`) y se mueven con él.
+- **Ritmo:** como arriba.
 
 ## 7 quater. `CRUCES` (escritura sin respuesta): calles que salen del tramo
 
@@ -404,6 +447,12 @@ la da el ángulo de `NAV` (sección 5). Ya no se intenta seguir los códigos
 
 ## 13. Cambios
 
+- **v0.9 (2026-10-09):** `TRAZO` con movimiento (sección 7 ter, bit 10 de
+  capacidades): recorrido de la moto en la ruta, puntos de detrás y 100 m más
+  de tramo, para que el dispositivo mueva el dibujo él solo entre mensajes y
+  pinte el camino hecho. Sin el bit 10, como antes. La versión del formato
+  sigue siendo 1. Es la fase 1; la fase 2 (la ruta entera en el dispositivo)
+  vendrá aparte.
 - **v0.8 (2026-10-09):** bloque opcional de anillos de rotondas al final de
   `CRUCES` (sección 7 quater): 1 byte con cuántos (0 a 4) y, por anillo, el
   centro (i16, i16) y el radio (u8), sin pasar de 179 bytes en total; bit 9 de

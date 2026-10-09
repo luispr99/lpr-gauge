@@ -299,6 +299,147 @@ final class MensajesTests: XCTestCase {
         XCTAssertEqual(MensajeTrazo.decodificar(original.codificar()), original)
     }
 
+    // MARK: TRAZO con movimiento (v0.9)
+
+    /// Dos por detrás, la moto y dos por delante; el giro, en el primero de
+    /// delante tras la moto (índice 3 de la lista entera).
+    private let conMovimiento = MensajeTrazo(
+        secuencia: 3,
+        puntos: [PuntoPlano(x: 0, y: -120), PuntoPlano(x: -5, y: -60), PuntoPlano(x: 0, y: 0),
+                 PuntoPlano(x: 0, y: 100), PuntoPlano(x: -30, y: 150)],
+        giro: 3, escala: 2, movimiento: true, recorrido: 1_234.5, atras: 2
+    )
+
+    func testTrazoConMovimientoCodifica() {
+        // Flags 0x0D: tramo, escala 2 y bit 3; recorrido 12 345 dm; 2 detrás
+        XCTAssertEqual(conMovimiento.codificar(), [
+            0x01, 0x03, 0x0D, 0x03,
+            0x39, 0x30, 0x00, 0x00,
+            0x02,
+            0x00, 0x00, 0x88, 0xFF,
+            0xFB, 0xFF, 0xC4, 0xFF,
+            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x64, 0x00,
+            0xE2, 0xFF, 0x96, 0x00,
+        ])
+        // Al principio de la ruta: nada detrás, recorrido 0, escala 3
+        let alSalir = MensajeTrazo(secuencia: 0, puntos: [PuntoPlano(x: 0, y: 0), PuntoPlano(x: 0, y: 250)],
+                                   giro: 1, escala: 3, movimiento: true, recorrido: 0, atras: 0)
+        XCTAssertEqual(alSalir.codificar(), [
+            0x01, 0x00, 0x0F, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFA, 0x00,
+        ])
+        // 123 456,7 m son 1 234 567 dm (0x0012D687); sin giro, escala 1
+        let lejos = MensajeTrazo(secuencia: 16,
+                                 puntos: [PuntoPlano(x: 3, y: -40), PuntoPlano(x: 0, y: 0), PuntoPlano(x: 0, y: 312)],
+                                 giro: nil, escala: 1, movimiento: true, recorrido: 123_456.7, atras: 1)
+        XCTAssertEqual(lejos.codificar(), [
+            0x01, 0x10, 0x0B, 0xFF, 0x87, 0xD6, 0x12, 0x00, 0x01,
+            0x03, 0x00, 0xD8, 0xFF,
+            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x38, 0x01,
+        ])
+    }
+
+    func testTrazoConMovimientoSaturaElRecorrido() {
+        func recorrido(_ metros: Double) -> [UInt8] {
+            var mensaje = conMovimiento
+            mensaje.recorrido = metros
+            return Array(mensaje.codificar()[4...7])
+        }
+        XCTAssertEqual(recorrido(1e12), [0xFF, 0xFF, 0xFF, 0xFF])
+        XCTAssertEqual(recorrido(429_496_729.5), [0xFF, 0xFF, 0xFF, 0xFF])
+        XCTAssertEqual(recorrido(-5), [0x00, 0x00, 0x00, 0x00])
+        XCTAssertEqual(recorrido(.nan), [0x00, 0x00, 0x00, 0x00])
+        XCTAssertEqual(recorrido(0.04), [0x00, 0x00, 0x00, 0x00])
+        XCTAssertEqual(recorrido(0.05), [0x01, 0x00, 0x00, 0x00])
+    }
+
+    func testTrazoConMovimientoRecortaDejandoLosDeDelante() {
+        // Con 20 bytes caben 2 puntos (9 de cabecera): la moto y el primero de
+        // delante; ninguno de detrás. El giro pasa del 3 al 1
+        XCTAssertEqual(MensajeTrazo.puntosQueCaben(20, movimiento: true), 2)
+        XCTAssertEqual(conMovimiento.codificar(maximo: 20), [
+            0x01, 0x03, 0x0D, 0x01, 0x39, 0x30, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x64, 0x00,
+        ])
+        // Con 25, 4 puntos: los 3 de delante y el de detrás más cercano
+        let cuatro = conMovimiento.codificar(maximo: 25)
+        XCTAssertEqual(cuatro.count, 25)
+        XCTAssertEqual(cuatro[3], 2)
+        XCTAssertEqual(cuatro[8], 1)
+        XCTAssertEqual(Array(cuatro[9...12]), [0xFB, 0xFF, 0xC4, 0xFF])
+        // Como mucho 42 puntos (177 bytes); si no caben los de delante, no va
+        // ninguno de detrás, y un giro que queda fuera va como 255
+        XCTAssertEqual(MensajeTrazo.puntosQueCaben(177, movimiento: true), 42)
+        XCTAssertEqual(MensajeTrazo.puntosQueCaben(512, movimiento: true), 42)
+        XCTAssertEqual(MensajeTrazo.puntosQueCaben(8, movimiento: true), 0)
+        let muchos = (0..<60).map { PuntoPlano(x: 0, y: Double($0 - 5) * 10) }
+        let largo = MensajeTrazo(secuencia: 0, puntos: muchos, giro: 50, movimiento: true, recorrido: 10, atras: 5)
+            .codificar()
+        XCTAssertEqual(largo.count, 177)
+        XCTAssertEqual(largo[8], 0)
+        XCTAssertEqual(largo[3], 0xFF)
+        // La moto, primera de la lista
+        XCTAssertEqual(Array(largo[9...12]), [0x00, 0x00, 0x00, 0x00])
+        // Más de 10 detrás: se quitan los más lejanos
+        let detras = (0..<12).map { PuntoPlano(x: 0, y: Double($0 - 12) * 10) }
+        let delante = [PuntoPlano(x: 0, y: 0), PuntoPlano(x: 0, y: 100), PuntoPlano(x: 0, y: 200),
+                       PuntoPlano(x: 0, y: 300)]
+        let doce = MensajeTrazo(secuencia: 0, puntos: detras + delante, giro: 14, movimiento: true, recorrido: 10,
+                                atras: 12).codificar()
+        XCTAssertEqual(doce.count, 9 + 14 * 4)
+        XCTAssertEqual(doce[8], 10)
+        XCTAssertEqual(doce[3], 12)
+        // El primero, el de -100 m
+        XCTAssertEqual(Array(doce[9...12]), [0x00, 0x00, 0x9C, 0xFF])
+    }
+
+    func testTrazoConMovimientoSinTramo() {
+        // Sin tramo, el mensaje de siempre, de 4 bytes
+        XCTAssertEqual(MensajeTrazo(secuencia: 5, puntos: [], giro: nil, movimiento: true, recorrido: 50).codificar(),
+                       [0x01, 0x05, 0x00, 0xFF])
+        // La moto fuera de la lista, o sin nada más que ella
+        let fuera = [PuntoPlano(x: 0, y: -50), PuntoPlano(x: 0, y: 0)]
+        XCTAssertEqual(MensajeTrazo(secuencia: 5, puntos: fuera, giro: nil, movimiento: true, atras: 2).codificar(),
+                       [0x01, 0x05, 0x00, 0xFF])
+        XCTAssertEqual(MensajeTrazo(secuencia: 5, puntos: [PuntoPlano(x: 0, y: 0)], giro: nil, movimiento: true)
+                        .codificar(), [0x01, 0x05, 0x00, 0xFF])
+    }
+
+    func testTrazoConMovimientoDecodifica() {
+        XCTAssertEqual(MensajeTrazo.decodificar(conMovimiento.codificar()), conMovimiento)
+        let lejos = MensajeTrazo(secuencia: 16,
+                                 puntos: [PuntoPlano(x: 3, y: -40), PuntoPlano(x: 0, y: 0), PuntoPlano(x: 0, y: 312)],
+                                 giro: nil, escala: 1, movimiento: true, recorrido: 123_456.7, atras: 1)
+        XCTAssertEqual(MensajeTrazo.decodificar(lejos.codificar()), lejos)
+        // Con el bit 3 y menos de 9 bytes: se descarta
+        XCTAssertNil(MensajeTrazo.decodificar([0x01, 0x03, 0x0D, 0x03, 0x39, 0x30, 0x00, 0x00]))
+        // Sin el bit 0: sin tramo, pero con el recorrido (1 m)
+        XCTAssertEqual(MensajeTrazo.decodificar([0x01, 0x05, 0x08, 0xFF, 0x0A, 0x00, 0x00, 0x00, 0x00]),
+                       MensajeTrazo(secuencia: 5, puntos: [], giro: nil, movimiento: true, recorrido: 1))
+        // Un `atrás` que deja la moto fuera de los puntos: sin tramo
+        XCTAssertEqual(MensajeTrazo.decodificar([0x01, 0x00, 0x09, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x02,
+                                                 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x64, 0x00]),
+                       MensajeTrazo(secuencia: 0, puntos: [], giro: nil, movimiento: true))
+        // El formato de siempre se lee sin movimiento
+        let antiguo = MensajeTrazo.decodificar([0x01, 0x02, 0x05, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x64, 0x00])
+        XCTAssertEqual(antiguo?.movimiento, false)
+        XCTAssertEqual(antiguo?.atras, 0)
+        XCTAssertEqual(antiguo?.puntos.count, 2)
+    }
+
+    func testTrazoSinMovimientoNoCambia() {
+        // Con movimiento a false, el recorrido y los de detrás no viajan: el
+        // formato de siempre, con la lista tal cual
+        var mensaje = conMovimiento
+        mensaje.movimiento = false
+        let bytes = mensaje.codificar()
+        XCTAssertEqual(bytes.count, 4 + 5 * 4)
+        XCTAssertEqual(Array(bytes[0...3]), [0x01, 0x03, 0x05, 0x03])
+    }
+
     // MARK: CRUCES
 
     func testCrucesSinCalles() {
@@ -516,6 +657,16 @@ final class MensajesTests: XCTestCase {
                                            .anillos])
         XCTAssertEqual(info?.firmware, [0, 4, 0])
         XCTAssertEqual(Capacidades.anillos.rawValue, 0x0200)
+        XCTAssertEqual(info?.capacidades.contains(.movimiento), false)
+    }
+
+    func testDeviceInfoDelCuadroConMovimiento() {
+        // 0x07EF: el cuadro 0.5.0, también con el movimiento (v0.9)
+        let info = DeviceInfo.decodificar([0x01, 0x01, 0xEF, 0x07, 0x00, 0x00, 0x05, 0x00])
+        XCTAssertEqual(info?.capacidades, [.nav, .gps, .status, .navText, .movil, .trazo, .movilAlCambiar, .cruces,
+                                           .anillos, .movimiento])
+        XCTAssertEqual(info?.firmware, [0, 5, 0])
+        XCTAssertEqual(Capacidades.movimiento.rawValue, 0x0400)
     }
 
     func testDeviceInfoDescartaLoCorto() {
