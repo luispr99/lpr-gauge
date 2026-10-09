@@ -233,10 +233,11 @@ final class MensajesTests: XCTestCase {
             0x03, 0x02, 0xD3, 0xFF, 0x78, 0x00,
         ])
         XCTAssertEqual(MensajeNav.decodificar(bytes), mensaje)
-        // Lo que admita la conexión (§2): 31 bytes o más, todo; de 25 a 30,
+        // Lo que admita la conexión (§2): 31 bytes, todo; con 32 o más, el
+        // byte de carriles detrás (v0.12; aquí, sin carriles); de 25 a 30,
         // sin el «y luego»; menos de 25, los 17 de la v0.6
         XCTAssertEqual(mensaje.codificar(maximo: 31), bytes)
-        XCTAssertEqual(mensaje.codificar(maximo: 182), bytes)
+        XCTAssertEqual(mensaje.codificar(maximo: 182), bytes + [0x00])
         XCTAssertEqual(mensaje.codificar(maximo: 30), Array(bytes.prefix(25)))
         XCTAssertEqual(mensaje.codificar(maximo: 25), Array(bytes.prefix(25)))
         XCTAssertEqual(mensaje.codificar(maximo: 24), Array(bytes.prefix(17)))
