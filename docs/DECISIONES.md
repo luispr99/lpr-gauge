@@ -67,6 +67,30 @@ final.
   como mucho una petición por segundo [F20]. Para un producto haría falta un
   servidor propio.
 
+### 2026-10-09 · Búsqueda con Apple Maps y variantes de ruta
+
+- **Decisión anterior, del mismo día:** búsqueda con Nominatim (ver más abajo).
+- **Decisión:** a petición del autor, la búsqueda pasa a Apple Maps (MapKit):
+  sugerencias mientras se escribe (`MKLocalSearchCompleter`) y posición del lugar
+  elegido (`MKLocalSearch`). Es gratuito y sin clave, y no tiene la prohibición
+  de autocompletar de Nominatim, que deja de usarse.
+- **Rutas:** siguen siendo de Valhalla, porque Apple Maps no da el tipo de
+  maniobra.
+- **Condiciones (orientativo):** usar un resultado de Apple para pedir la ruta a
+  otro servidor encaja con el uso personal del Xcode and Apple SDKs Agreement.
+  Para un producto lo tendría que revisar una persona (DPLA, anexo 6 [F17]).
+- **Mapa en la pantalla de búsqueda,** con la posición. Al elegir un destino se
+  previsualizan **tres variantes** antes de empezar, todas sin peajes:
+  - **Más rápida:** opciones de moto por defecto.
+  - **Por secundarias:** `use_highways = 0` y `use_trails = 0,5`. Valhalla no
+    mide las curvas; según su documentación, `use_trails` hacia 1 evita las
+    carreteras principales y va por secundarias [F33]. Es la aproximación a «con
+    más curvas» que pidió el autor.
+  - **Más corta:** `shortest = true` [F33].
+  - Se piden con 1,1 s de separación, por el límite de FOSSGIS, y las que salen
+    iguales se muestran una sola vez. Al recalcular por desvío se usan las
+    opciones de la variante elegida.
+
 ### 2026-10-09 · Navegación: servidores, buscador y Ferrostar
 
 - **Origen:** el autor propuso usar lo mismo que la web
@@ -400,3 +424,6 @@ Ferrostar:
   Valhalla, referencia de la API: https://valhalla.github.io/valhalla/api/route/api-reference/
 - [F32] Política de uso de Nominatim (OSMF):
   https://operations.osmfoundation.org/policies/nominatim/
+- [F33] Valhalla, opciones de coste de la moto (rama master, consultada el
+  2026-10-09):
+  https://github.com/valhalla/valhalla/blob/master/docs/docs/api/route/api-reference.md
