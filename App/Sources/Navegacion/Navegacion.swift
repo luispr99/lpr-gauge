@@ -29,6 +29,13 @@ final class Navegacion: ObservableObject {
     @Published private(set) var fueraDeRuta = false
     @Published private(set) var recalculando = false
 
+    /// Simulación: en vez del GPS, una posición que recorre la ruta sola, para ver
+    /// cambiar las indicaciones sin moverse. Avanza 10 m por paso, y cada paso
+    /// dura 1 s dividido por el factor de velocidad (factor 1 = 36 km/h).
+    @Published var simular = false
+    @Published var factorSimulacion: UInt64 = 2
+    @Published private(set) var simulando = false
+
     /// Altitud del GPS (metros sobre el nivel del mar) y su precisión; nil sin dato.
     @Published private(set) var altitud: Double?
     @Published private(set) var precisionVertical: Double?
@@ -37,6 +44,7 @@ final class Navegacion: ObservableObject {
     private let ubicacion = ProveedorUbicacion()
     private let buscador = BuscadorNominatim()
     private var nucleo: FerrostarCore?
+    private var simulador: SimulatedLocationProvider?
     private var suscripcion: AnyCancellable?
 
     init() {
@@ -79,10 +87,21 @@ final class Navegacion: ObservableObject {
         }
         calculando = true
         aviso = nil
+        let simulacion = simular
+        let factor = max(1, factorSimulacion)
         Task {
             defer { self.calculando = false }
             do {
-                let nucleo = try crearNucleo()
+                // Con simulación, Ferrostar recibe las posiciones del simulador en
+                // vez de las del GPS; la altitud sigue saliendo del GPS real
+                let simulador = simulacion ? SimulatedLocationProvider(location: origen) : nil
+                let fuente: LocationProviding
+                if let simulador {
+                    fuente = simulador
+                } else {
+                    fuente = ubicacion
+                }
+                let nucleo = try crearNucleo(ubicacion: fuente)
                 let punto = Waypoint(
                     coordinate: GeographicCoordinate(lat: destino.latitud, lng: destino.longitud),
                     kind: .break
@@ -92,8 +111,14 @@ final class Navegacion: ObservableObject {
                     aviso = "El servidor no ha devuelto ninguna ruta"
                     return
                 }
+                if let simulador {
+                    try simulador.setSimulatedRoute(ruta, resampleDistance: 10)
+                    simulador.warpFactor = factor
+                }
                 try nucleo.startNavigation(route: ruta)
                 self.nucleo = nucleo
+                self.simulador = simulador
+                simulando = simulador != nil
                 self.destino = destino
                 navegando = true
                 llegada = false
@@ -114,6 +139,11 @@ final class Navegacion: ObservableObject {
     func terminar() {
         nucleo?.stopNavigation()
         nucleo = nil
+        // El simulador guarda una referencia fuerte a Ferrostar: se suelta aquí
+        simulador?.stopUpdating()
+        simulador?.delegate = nil
+        simulador = nil
+        simulando = false
         suscripcion = nil
         navegando = false
         llegada = false
@@ -128,7 +158,7 @@ final class Navegacion: ObservableObject {
         ubicacion.startUpdating()
     }
 
-    private func crearNucleo() throws -> FerrostarCore {
+    private func crearNucleo(ubicacion fuente: LocationProviding) throws -> FerrostarCore {
         // Valores de la app de demostración de Ferrostar 0.57.0 (DemoModel.swift)
         let configuracion = SwiftNavigationControllerConfig(
             waypointAdvance: .waypointWithinRange(100.0),
@@ -156,7 +186,7 @@ final class Navegacion: ObservableObject {
             .withJsonOptions(options: opciones)
         return try FerrostarCore(
             wellKnownRouteProvider: proveedor,
-            locationProvider: ubicacion,
+            locationProvider: fuente,
             navigationControllerConfig: configuracion,
             networkSession: ClienteRutas(),
             // La app no habla: las indicaciones van a la pantalla y al cuadro

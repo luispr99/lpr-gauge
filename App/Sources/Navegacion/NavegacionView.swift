@@ -88,6 +88,20 @@ struct NavegacionView: View {
                 }
             }
 
+            Section {
+                Toggle("Simular el recorrido", isOn: $navegacion.simular)
+                if navegacion.simular {
+                    Picker("Velocidad", selection: $navegacion.factorSimulacion) {
+                        Text(verbatim: "36 km/h").tag(UInt64(1))
+                        Text(verbatim: "72 km/h").tag(UInt64(2))
+                        Text(verbatim: "108 km/h").tag(UInt64(3))
+                    }
+                    .pickerStyle(.segmented)
+                }
+            } footer: {
+                Text("La posición recorre la ruta sola, para ver cambiar las indicaciones sin moverte. La ruta sale de tu posición real.")
+            }
+
             Section("GPS") {
                 LabeledContent("Posición") {
                     Text(navegacion.hayPosicion ? "Con señal" : "Esperando señal…")
@@ -128,6 +142,11 @@ struct NavegacionView: View {
                         .font(.title3)
                         .multilineTextAlignment(.center)
                 }
+            }
+
+            if navegacion.simulando {
+                Label("Simulación: la posición no es la real", systemImage: "play.circle")
+                    .foregroundStyle(.blue)
             }
 
             if navegacion.recalculando {
