@@ -272,6 +272,33 @@ final.
   autovías), sin contar los enlaces [F37]. Como los demás, los km son un
   máximo por maniobra.
 
+### 2026-10-09 · Primeros datos en el cuadro: texto de navegación y carga (0.8.0)
+
+- **Petición del autor:** que el cuadro muestre el icono de la batería del
+  iPhone «cargando», sin aviso, y una cara nueva solo de navegación, sin
+  peticiones OBD, con el texto que mande la app en el centro, «sin nada más»,
+  para empezar a ver resultados.
+- **Protocolo v0.3** (`PROTOCOLO.md`): `NAV_TEXT` (sección 7 bis), la única
+  característica que puede pasar de 20 bytes, hasta 180 bytes de texto en
+  UTF-8, y el eco de `NAV_TEXT` en el byte 5 de `STATUS`.
+- **App:**
+  - con una ruta iniciada, manda la distancia al giro y, en otra línea, la
+    instrucción («350 m» / «Gira a la derecha en…»); al llegar, «Has llegado»;
+    al terminar, un texto vacío;
+  - en la pestaña Placa, un campo para mandar un texto de prueba sin ruta;
+  - el texto se manda al cambiar y cada 2 s, y no se escribe en el registro de
+    la app (puede llevar calles), solo su longitud.
+- **Cuadro:** el autor pidió hacerlo desde esta sesión, aunque la integración
+  se iba a hacer en la del cuadro. El código del cuadro no entra en este
+  repositorio público; los cambios se describen en su `docs/CAMBIOS_CLAUDE.md`,
+  sección 74. Resumen:
+  - servicio LPR en lugar del de prueba, con `DEVICE_INFO` tipo 1,
+    capacidades `STATUS` + `NAV_TEXT` + `MOVIL` y firmware 0.1.0;
+  - el rayo verde sustituye al icono del móvil mientras el iPhone se carga;
+  - la cara de navegación, que no pide nada por OBD. Por eso, mientras se
+    está en ella, no suman el tiempo de conducción ni las horas de motor del
+    cuadro.
+
 ### 2026-10-09 · Navegación: servidores, buscador y Ferrostar
 
 - **Origen:** el autor propuso usar lo mismo que la web
