@@ -165,7 +165,7 @@ public enum RutasGuardadas {
     /// directo. Como mucho `huecos`.
     public static func paraElCuadro(_ lista: [RutaGuardada], accesos: [UUID?]) -> [RutaGuardada] {
         let fijadas = accesos.prefix(huecos).compactMap { id in lista.first { $0.id == id } }
-        let ids = Set(fijadas.map(.id))
+        let ids = Set(fijadas.map(\.id))
         let recientes = lista.filter { !ids.contains($0.id) }
         return Array((fijadas + recientes).prefix(huecos))
     }
