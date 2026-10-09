@@ -1,4 +1,4 @@
-// Codificación y decodificación de los mensajes (docs/PROTOCOLO.md, v0.7).
+// Codificación y decodificación de los mensajes (docs/PROTOCOLO.md, v0.8).
 // Reglas comunes (sección 3): little-endian, primer byte = versión, campos
 // nuevos al final; el receptor ignora los bytes que sobran y descarta los
 // mensajes cortos o con una versión que no conoce.
@@ -499,10 +499,37 @@ public struct CalleCruce: Equatable {
     }
 }
 
+/// El anillo de una rotonda del tramo de TRAZO (v0.8): el centro, en metros
+/// en los ejes de la moto (los de TRAZO), y el radio, en metros.
+public struct AnilloCruce: Equatable {
+    public var x: Double
+    public var y: Double
+    public var radio: Double
+
+    public init(x: Double, y: Double, radio: Double) {
+        self.x = x
+        self.y = y
+        self.radio = radio
+    }
+}
+
+/// El radio de un anillo en u8 (CRUCES, v0.8): redondeado y saturado entre 1
+/// y 255 m; lo que no es finito, 1.
+func radioU8(_ valor: Double) -> UInt8 {
+    guard valor.isFinite else { return 1 }
+    return UInt8(min(255, max(1, valor.rounded())))
+}
+
 public struct MensajeCruces: Equatable {
     public static let longitudMinima = 4
     /// Como mucho: 4 bytes de cabecera y 35 calles de 5 bytes (179 bytes).
     public static let maximoCalles = 35
+    /// Como mucho 4 anillos (v0.8), tras las calles: 1 byte con cuántos y 5
+    /// por anillo.
+    public static let maximoAnillos = 4
+    /// El mensaje entero, con los anillos, no pasa de 179 bytes: el
+    /// dispositivo recorta ahí.
+    public static let longitudMaxima = 179
 
     public var secuencia: UInt8
     /// Secuencia del TRAZO al que acompaña: el dispositivo solo dibuja las
@@ -510,46 +537,86 @@ public struct MensajeCruces: Equatable {
     public var trazo: UInt8
     /// Los cruces más cercanos a la moto primero (Cruces.calles).
     public var calles: [CalleCruce]
+    /// Los anillos de las rotondas del tramo (v0.8), los más cercanos
+    /// primero (Cruces.anillos). Vacío: el mensaje acaba tras las calles, como
+    /// antes de la v0.8. Solo para un dispositivo que anuncie el bit 9 de
+    /// capacidades.
+    public var anillos: [AnilloCruce]
 
-    public init(secuencia: UInt8, trazo: UInt8, calles: [CalleCruce]) {
+    public init(secuencia: UInt8, trazo: UInt8, calles: [CalleCruce], anillos: [AnilloCruce] = []) {
         self.secuencia = secuencia
         self.trazo = trazo
         self.calles = calles
+        self.anillos = anillos
     }
 
     /// Cuántas calles caben en `maximo` bytes (lo que admite la conexión), sin
-    /// pasar de 35.
-    public static func callesQueCaben(_ maximo: Int) -> Int {
-        max(0, min(maximoCalles, (maximo - longitudMinima) / 5))
+    /// pasar de 35 ni de 179 bytes en total, con `anillos` anillos detrás
+    /// (como mucho 4; con 0 no hay bloque de anillos).
+    public static func callesQueCaben(_ maximo: Int, anillos: Int = 0) -> Int {
+        let limite = min(maximo, longitudMaxima)
+        let cuantos = min(max(0, anillos), anillosQueCaben(maximo))
+        let bloque = cuantos > 0 ? 1 + 5 * cuantos : 0
+        return max(0, min(maximoCalles, (limite - longitudMinima - bloque) / 5))
     }
 
-    /// Bytes del mensaje, sin pasar de `maximo`: si no caben todas las calles,
-    /// se recorta por el final (se quedan las de los cruces más cercanos). Las
-    /// coordenadas, como en TRAZO.
-    public func codificar(maximo: Int = longitudMinima + 5 * maximoCalles) -> [UInt8] {
-        let lista = calles.prefix(Self.callesQueCaben(maximo))
+    /// Cuántos anillos caben en `maximo` bytes, sin calles (como mucho 4).
+    public static func anillosQueCaben(_ maximo: Int) -> Int {
+        max(0, min(maximoAnillos, (min(maximo, longitudMaxima) - longitudMinima - 1) / 5))
+    }
+
+    /// Bytes del mensaje, sin pasar de `maximo` ni de 179. Los anillos van
+    /// primero: si no caben todas las calles, se recorta por el final (se
+    /// quedan las de los cruces más cercanos). Las coordenadas, como en TRAZO;
+    /// el radio, redondeado entre 1 y 255 m. Sin anillos (o si no cabe
+    /// ninguno), el mensaje acaba tras las calles.
+    public func codificar(maximo: Int = longitudMaxima) -> [UInt8] {
+        let listaAnillos = anillos.prefix(Self.anillosQueCaben(maximo))
+        let lista = calles.prefix(Self.callesQueCaben(maximo, anillos: listaAnillos.count))
         var bytes: [UInt8] = [Protocolo.version, secuencia, trazo, UInt8(lista.count)]
         for calle in lista {
             bytes.anadirU16(metrosI16(calle.x))
             bytes.anadirU16(metrosI16(calle.y))
             bytes.append(calle.direccion)
         }
+        if !listaAnillos.isEmpty {
+            bytes.append(UInt8(listaAnillos.count))
+            for anillo in listaAnillos {
+                bytes.anadirU16(metrosI16(anillo.x))
+                bytes.anadirU16(metrosI16(anillo.y))
+                bytes.append(radioU8(anillo.radio))
+            }
+        }
         return bytes
     }
 
     /// Descarta lo corto y otra versión. Lee como mucho `n` calles, y solo las
-    /// que lleguen enteras (supuesto).
+    /// que lleguen enteras (supuesto). Si llegan las `n` y el mensaje sigue, el
+    /// byte siguiente es el número de anillos (v0.8): lee como mucho 4, y solo
+    /// los que lleguen enteros (supuesto, como las calles).
     public static func decodificar(_ bytes: [UInt8]) -> MensajeCruces? {
         guard bytes.count >= longitudMinima, bytes[0] == Protocolo.version else { return nil }
+        let n = Int(bytes[3])
         var calles: [CalleCruce] = []
         var i = longitudMinima
-        while calles.count < Int(bytes[3]), i + 4 < bytes.count {
+        while calles.count < n, i + 4 < bytes.count {
             let x = Int16(bitPattern: leerU16(bytes, i))
             let y = Int16(bitPattern: leerU16(bytes, i + 2))
             calles.append(CalleCruce(x: Double(x), y: Double(y), direccion: bytes[i + 4]))
             i += 5
         }
-        return MensajeCruces(secuencia: bytes[1], trazo: bytes[2], calles: calles)
+        var anillos: [AnilloCruce] = []
+        if calles.count == n, i < bytes.count {
+            let m = min(Int(bytes[i]), maximoAnillos)
+            var j = i + 1
+            while anillos.count < m, j + 4 < bytes.count {
+                let x = Int16(bitPattern: leerU16(bytes, j))
+                let y = Int16(bitPattern: leerU16(bytes, j + 2))
+                anillos.append(AnilloCruce(x: Double(x), y: Double(y), radio: Double(bytes[j + 4])))
+                j += 5
+            }
+        }
+        return MensajeCruces(secuencia: bytes[1], trazo: bytes[2], calles: calles, anillos: anillos)
     }
 }
 
@@ -571,6 +638,9 @@ public struct Capacidades: OptionSet, Equatable {
     public static let movilAlCambiar = Capacidades(rawValue: 1 << 7)
     /// Calles de los cruces del tramo (v0.6, §7 quater).
     public static let cruces  = Capacidades(rawValue: 1 << 8)
+    /// El dispositivo dibuja los anillos de las rotondas que van tras las
+    /// calles de CRUCES (v0.8, §7 quater).
+    public static let anillos = Capacidades(rawValue: 1 << 9)
 }
 
 public struct DeviceInfo: Equatable {

@@ -113,6 +113,9 @@ struct PlacaView: View {
                         }
                     }
                     LabeledContent("Eco de los cruces") { Text(texto(enlace.ecoCruces)) }
+                    LabeledContent("Anillos de las rotondas") {
+                        Text(enlace.admiteAnillos ? "Con los cruces" : "La placa no los dibuja")
+                    }
                 } header: {
                     Text("Recorrido en el cuadro")
                 } footer: {

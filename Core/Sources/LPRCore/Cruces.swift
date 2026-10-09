@@ -7,22 +7,49 @@ public struct Cruce: Equatable {
     public var punto: PuntoRuta
     /// Grados desde el norte, en sentido horario, desde el cruce hacia fuera.
     public var rumbos: [Double]
+    /// Por cada rumbo, en el mismo orden, si se puede entrar por esa calle
+    /// desde el cruce (`entry` de Valhalla): false en una calle de un sentido
+    /// que solo llega a la ruta, en una acera, un paso de peatones o un carril
+    /// bici; nil si no se sabe. Siempre de la misma longitud que `rumbos` al
+    /// crearlo; para leerlo, `entrada(_:)`, que no se sale del array.
+    public var entradas: [Bool?]
     /// Metros desde el principio de la ruta hasta el cruce, por la ruta (de su
     /// índice en el trazado, `geometry_index`); nil si no se conoce. Sirve para
     /// no tomar los cruces de otra pasada por el mismo sitio ni los ya pasados.
     public var recorrido: Double?
+    /// La rotonda del cruce, si se le ha ajustado anillo: su índice en
+    /// RutaConCruces.anillos. Son de la rotonda los cruces de su paso y el
+    /// primero del paso siguiente (la salida). Nil en los demás.
+    public var anillo: Int?
 
-    public init(punto: PuntoRuta, rumbos: [Double], recorrido: Double? = nil) {
+    /// `entradas` con otra longitud que `rumbos` (o sin dar) se toma como
+    /// desconocida en todas las calles.
+    public init(punto: PuntoRuta, rumbos: [Double], recorrido: Double? = nil, entradas: [Bool?]? = nil,
+                anillo: Int? = nil) {
         self.punto = punto
         self.rumbos = rumbos
         self.recorrido = recorrido
+        if let entradas, entradas.count == rumbos.count {
+            self.entradas = entradas
+        } else {
+            self.entradas = [Bool?](repeating: nil, count: rumbos.count)
+        }
+        self.anillo = anillo
+    }
+
+    /// Si se puede entrar por la calle `indice` (de `rumbos`); nil si no se
+    /// sabe o si no hay dato para ese índice.
+    public func entrada(_ indice: Int) -> Bool? {
+        entradas.indices.contains(indice) ? entradas[indice] : nil
     }
 }
 
 /// Una ruta de una respuesta en formato OSRM: su trazado y sus cruces.
 public struct RutaConCruces: Equatable {
     public var puntos: [PuntoRuta]
-    public var cruces: [Cruce]
+    /// Los cruces con calles laterales, en el orden de la ruta, para un cuadro
+    /// que no dibuja los anillos de las rotondas.
+    public private(set) var cruces: [Cruce]
     /// Metros del trazado entero (los de `recorrido` de los cruces llegan
     /// hasta aquí).
     public var longitud: Double
@@ -32,55 +59,129 @@ public struct RutaConCruces: Equatable {
     /// da en sus RouteStep, y sin él las carreteras que solo tienen número
     /// (M-510, N-6) se quedaban sin texto (lo vio la revisión de la 0.10.0).
     public var vias: [String]
+    /// Los anillos de las rotondas de la ruta que se han podido ajustar
+    /// (Anillo.ajustar), en el orden de la ruta (v0.8).
+    public private(set) var anillos: [Anillo]
+    /// Los cruces para un cuadro que dibuja los anillos (Capacidades.anillos):
+    /// en las rotondas con anillo, sin las calles que son el propio anillo y
+    /// con los brazos con isleta juntados (Cruces.conAnillos). Se calculan al
+    /// crear la ruta, una vez.
+    public private(set) var crucesConAnillos: [Cruce]
 
-    public init(puntos: [PuntoRuta], cruces: [Cruce], vias: [String] = []) {
+    public init(puntos: [PuntoRuta], cruces: [Cruce], vias: [String] = [], anillos: [Anillo] = []) {
         self.puntos = puntos
         self.cruces = cruces
         self.longitud = RespuestaOSRM.recorridos(puntos).last ?? 0
         self.vias = vias
+        self.anillos = anillos
+        self.crucesConAnillos = Cruces.conAnillos(cruces, anillos: anillos)
     }
 }
 
 /// Respuesta de /route de Valhalla en formato OSRM, la que pide Ferrostar para
 /// guiar. Solo lo que hace falta para los cruces: el trazado de cada ruta
-/// (`geometry`, polyline6) y, de cada paso, sus cruces (`intersections`), con
-/// la posición (`location`, longitud y latitud), los rumbos de todas las calles
-/// (`bearings`) y cuáles son la de llegada (`in`) y la de salida (`out`).
-/// Comprobado con valhalla1.openstreetmap.de el 2026-10-09, también con las
-/// opciones que pone Ferrostar 0.57.0 en su petición (docs/DECISIONES.md).
+/// (`geometry`, polyline6) y, de cada paso, su maniobra (`maneuver`, para las
+/// rotondas) y sus cruces (`intersections`), con la posición (`location`,
+/// longitud y latitud), los rumbos de todas las calles (`bearings`), si se
+/// puede entrar por cada una (`entry`) y cuáles son la de llegada (`in`) y la
+/// de salida (`out`). Comprobado con valhalla1.openstreetmap.de el 2026-10-09,
+/// también con las opciones que pone Ferrostar 0.57.0 en su petición
+/// (docs/DECISIONES.md).
 public enum RespuestaOSRM {
+    /// Regla 1 de las rayas dobles (v0.12.0): un cruce con al menos estas
+    /// calles laterales y ninguna por la que se pueda entrar (`entry` false en
+    /// todas) se queda sin ellas. Es el patrón de las aceras y los pasos de
+    /// peatones: Valhalla da una calle por cada vía de OpenStreetMap del nodo.
+    /// Con una sola (una calle de un sentido que llega a la ruta) se queda.
+    /// Supuesto, sacado de 3 rutas reales (Madrid y Segovia, 2026-10-09).
+    static let minimoLateralesSinEntrada = 2
+
+    /// Tipos de maniobra de las rotondas en formato OSRM (`maneuver.type`).
+    static let tiposRotonda: Set<String> = ["roundabout", "rotary"]
+
     /// Las rutas, en el orden de la respuesta. Los cruces sin calles laterales
-    /// (la salida, la llegada, una curva sin cruce) no se guardan. Lanza un
-    /// error si no es una respuesta OSRM (por ejemplo, la del formato propio de
-    /// Valhalla).
+    /// (la salida, la llegada, una curva sin cruce) no se guardan, ni las
+    /// calles de los cruces que caen en la regla 1. Lanza un error si no es
+    /// una respuesta OSRM (por ejemplo, la del formato propio de Valhalla).
     public static func rutas(de datos: Data) throws -> [RutaConCruces] {
         let respuesta = try JSONDecoder().decode(Respuesta.self, from: datos)
-        return respuesta.routes.map { ruta -> RutaConCruces in
-            let puntos = Polilinea.decodificar(ruta.geometry, precision: 6)
-            let hastaPunto = RespuestaOSRM.recorridos(puntos)
-            var cruces: [Cruce] = []
-            var vias: [String] = []
-            for tramo in ruta.legs ?? [] {
-                for paso in tramo.steps ?? [] {
-                    vias.append(via(nombre: paso.name, numero: paso.ref))
-                    for cruce in paso.intersections ?? [] {
-                        guard cruce.location.count >= 2, let rumbos = cruce.bearings else { continue }
-                        // Las calles laterales: todas salvo la de llegada y la de salida
-                        let laterales = rumbos.indices
-                            .filter { $0 != cruce.entrada && $0 != cruce.salida }
-                            .map { rumbos[$0] }
-                        guard !laterales.isEmpty else { continue }
-                        let indice = cruce.indiceTrazado ?? -1
-                        cruces.append(Cruce(
-                            punto: PuntoRuta(latitud: cruce.location[1], longitud: cruce.location[0]),
-                            rumbos: laterales,
-                            recorrido: hastaPunto.indices.contains(indice) ? hastaPunto[indice] : nil
-                        ))
-                    }
-                }
+        return respuesta.routes.map { ruta(de: $0) }
+    }
+
+    static func ruta(de ruta: Ruta) -> RutaConCruces {
+        let puntos = Polilinea.decodificar(ruta.geometry, precision: 6)
+        let hastaPunto = recorridos(puntos)
+        // Los pasos de todos los tramos seguidos: geometry_index es de la ruta
+        // entera
+        let pasos = (ruta.legs ?? []).flatMap { $0.steps ?? [] }
+        var cruces: [Cruce] = []
+        var vias: [String] = []
+        // De cada paso, los índices en `cruces` de los suyos y el de su primer
+        // cruce (si tiene calles), para las rotondas
+        var crucesDelPaso: [[Int]] = []
+        var primeroDelPaso: [Int?] = []
+        for paso in pasos {
+            vias.append(via(nombre: paso.name, numero: paso.ref))
+            var suyos: [Int] = []
+            var primero: Int?
+            for (numero, interseccion) in (paso.intersections ?? []).enumerated() {
+                guard let nuevo = cruce(de: interseccion, hastaPunto: hastaPunto) else { continue }
+                if numero == 0 { primero = cruces.count }
+                suyos.append(cruces.count)
+                cruces.append(nuevo)
             }
-            return RutaConCruces(puntos: puntos, cruces: cruces, vias: vias)
+            crucesDelPaso.append(suyos)
+            primeroDelPaso.append(primero)
         }
+
+        // Las rotondas: el arco que recorre la ruta va del primer cruce del paso
+        // de la rotonda al primero del paso siguiente (la salida)
+        var anillos: [Anillo] = []
+        for (numero, paso) in pasos.enumerated() where numero + 1 < pasos.count {
+            guard let tipo = paso.maneuver?.type, tiposRotonda.contains(tipo),
+                  let inicio = paso.intersections?.first?.indiceTrazado,
+                  let fin = pasos[numero + 1].intersections?.first?.indiceTrazado,
+                  inicio >= 0, inicio < fin, fin < puntos.count, fin < hastaPunto.count,
+                  let anillo = Anillo.ajustar(arco: Array(puntos[inicio...fin]),
+                                              recorridoEntrada: hastaPunto[inicio],
+                                              recorridoSalida: hastaPunto[fin])
+            else { continue }
+            let indice = anillos.count
+            anillos.append(anillo)
+            var suyos = crucesDelPaso[numero]
+            if let salida = primeroDelPaso[numero + 1] { suyos.append(salida) }
+            // Un cruce que fuera de dos rotondas seguidas se queda en la primera
+            for c in suyos where cruces.indices.contains(c) && cruces[c].anillo == nil {
+                cruces[c].anillo = indice
+            }
+        }
+        return RutaConCruces(puntos: puntos, cruces: cruces, vias: vias, anillos: anillos)
+    }
+
+    /// El cruce de una intersección con sus calles laterales (todas salvo la de
+    /// llegada y la de salida); nil si no tiene, si le falta la posición o si
+    /// cae en la regla 1. `entry` solo se usa si tiene la misma longitud que
+    /// `bearings`; si no, las entradas quedan desconocidas.
+    static func cruce(de interseccion: Interseccion, hastaPunto: [Double]) -> Cruce? {
+        guard interseccion.location.count >= 2, let rumbos = interseccion.bearings else { return nil }
+        let entry: [Bool]? = interseccion.entry.flatMap { $0.count == rumbos.count ? $0 : nil }
+        let laterales = rumbos.indices.filter { $0 != interseccion.entrada && $0 != interseccion.salida }
+        guard !laterales.isEmpty else { return nil }
+        let entradas: [Bool?] = laterales.map { i -> Bool? in
+            guard let entry, entry.indices.contains(i) else { return nil }
+            return entry[i]
+        }
+        // Regla 1: varias laterales y ninguna por la que se pueda entrar
+        if laterales.count >= minimoLateralesSinEntrada && entradas.allSatisfy({ $0 == false }) {
+            return nil
+        }
+        let indice = interseccion.indiceTrazado ?? -1
+        return Cruce(
+            punto: PuntoRuta(latitud: interseccion.location[1], longitud: interseccion.location[0]),
+            rumbos: laterales.map { rumbos[$0] },
+            recorrido: hastaPunto.indices.contains(indice) ? hastaPunto[indice] : nil,
+            entradas: entradas
+        )
     }
 
     /// La vía de un paso como se escribe junto a la flecha: el número y el
@@ -123,6 +224,14 @@ public enum RespuestaOSRM {
         let intersections: [Interseccion]?
         let name: String?
         let ref: String?
+        let maneuver: Maniobra?
+    }
+
+    struct Maniobra: Decodable {
+        /// «roundabout» y «rotary» son rotondas (`tiposRotonda`).
+        let type: String?
+        /// En las rotondas, el número de salida.
+        let exit: Int?
     }
 
     struct Interseccion: Decodable {
@@ -130,6 +239,8 @@ public enum RespuestaOSRM {
         let location: [Double]
         /// Valhalla los da enteros; como Double valen igual.
         let bearings: [Double]?
+        /// Por cada rumbo de `bearings`, si se puede entrar por esa calle.
+        let entry: [Bool]?
         /// Índices en `bearings` de la calle de llegada (no está en la salida)
         /// y de la de salida (no está en la llegada).
         let entrada: Int?
@@ -141,6 +252,7 @@ public enum RespuestaOSRM {
         enum CodingKeys: String, CodingKey {
             case location
             case bearings
+            case entry
             case entrada = "in"
             case salida = "out"
             case indiceTrazado = "geometry_index"
@@ -153,6 +265,18 @@ public enum Cruces {
     /// Metros como mucho entre un cruce y la ruta del tramo para que sea suyo.
     /// Valhalla pone cada cruce en un vértice del trazado, así que basta poco.
     static let tolerancia = 5.0
+
+    /// Regla 2 de las rayas dobles (v0.12.0): de cada grupo de calles casi
+    /// paralelas, a estos metros o menos a lo largo de la ruta y a estos grados
+    /// o menos de rumbo, se queda una (`juntarDobles`). Son la otra calzada de
+    /// las avenidas, las aceras y los carriles bici que Valhalla da como calles
+    /// aparte. Supuestos, sacados de 3 rutas reales (Madrid y Segovia,
+    /// 2026-10-09): con las reglas 1 y 2, de 151, 142 y 122 calles se pasa a
+    /// 78, 78 y 68; se quedan el 95 % de las calles por las que se puede
+    /// entrar, el 80 % de las de un sentido que llegan a la ruta y el 7 % de
+    /// las peatonales, y no queda ninguna pareja doble.
+    static let metrosDobles = 30.0
+    static let gradosDobles = 30.0
 
     /// La ruta de `rutas` con el mismo trazado que `geometria` (la del guiado de
     /// Ferrostar): el mismo número de puntos y todos a menos de 1 m. Todos, no
@@ -171,7 +295,9 @@ public enum Cruces {
     /// `tolerancia` metros de `ruta`, la del tramo sin simplificar, que empieza
     /// en la moto), en los ejes de la moto (el origen en el primer punto de
     /// `ruta` y `sentido` hacia arriba, como TRAZO). Los cruces más cercanos a
-    /// la moto, a lo largo de la ruta, primero; como mucho `maximo` calles.
+    /// la moto, a lo largo de la ruta, primero; de las calles casi paralelas y
+    /// cercanas, una (regla 2, `juntarDobles`); y después, como mucho `maximo`
+    /// calles.
     /// `ventana`: los metros de la ruta entera que cubre el tramo, desde la moto
     /// (Cruce.recorrido); un cruce con recorrido fuera de ella no cuenta, aunque
     /// caiga cerca del tramo (otra pasada por la misma calle o un cruce ya
@@ -239,16 +365,67 @@ public enum Cruces {
         }
         encontrados.sort { $0.recorrido != $1.recorrido ? $0.recorrido < $1.recorrido : $0.orden < $1.orden }
 
+        // Todas las calles de esos cruces, en ese orden
+        var laterales: [LateralEnRuta] = []
         var calles: [CalleCruce] = []
         for encontrado in encontrados {
             let cruce = cruces[encontrado.orden]
             guard let enEjes = Trazo.aEjesMoto([cruce.punto], origen: origen, rumbo: sentido).first else { continue }
-            for rumbo in cruce.rumbos {
-                guard calles.count < maximo else { return calles }
+            for (indice, rumbo) in cruce.rumbos.enumerated() {
+                laterales.append(LateralEnRuta(donde: encontrado.recorrido, rumbo: rumbo, entrada: cruce.entrada(indice)))
                 calles.append(CalleCruce(x: enEjes.x, y: enEjes.y, direccion: direccion(rumbo: rumbo, sentido: sentido)))
             }
         }
-        return calles
+        // Regla 2 antes de recortar: así no se gasta sitio en rayas dobles
+        return juntarDobles(laterales).prefix(maximo).map { calles[$0] }
+    }
+
+    /// Una calle de un cruce del tramo, para la regla 2: los metros por la ruta
+    /// desde la moto hasta su cruce, su rumbo y si se puede entrar por ella.
+    struct LateralEnRuta: Equatable {
+        var donde: Double
+        var rumbo: Double
+        var entrada: Bool?
+    }
+
+    /// Regla 2 de las rayas dobles: los índices de `laterales` (ordenadas por
+    /// `donde`) que se quedan, en orden. Cada grupo se ancla en la primera
+    /// calle que queda: con ella van las siguientes a `metrosDobles` o menos
+    /// por la ruta y a `gradosDobles` o menos de rumbo (de ella, no entre sí).
+    /// De cada grupo se queda la primera por la que se puede entrar o, si no
+    /// hay, la primera. Es la función `juntar` del estudio con las rutas reales
+    /// (docs/DECISIONES.md, 0.12.0).
+    static func juntarDobles(_ laterales: [LateralEnRuta]) -> [Int] {
+        var fuera = [Bool](repeating: false, count: laterales.count)
+        for i in laterales.indices {
+            if fuera[i] { continue }
+            var grupo = [i]
+            var j = i + 1
+            while j < laterales.count && laterales[j].donde - laterales[i].donde <= metrosDobles {
+                if !fuera[j] && abs(diferenciaAngular(laterales[i].rumbo, laterales[j].rumbo)) <= gradosDobles {
+                    grupo.append(j)
+                }
+                j += 1
+            }
+            guard grupo.count >= 2 else { continue }
+            let queda = grupo.first { laterales[$0].entrada == true } ?? i
+            for k in grupo where k != queda {
+                fuera[k] = true
+            }
+        }
+        return laterales.indices.filter { !fuera[$0] }
+    }
+
+    /// `a` menos `b`, en grados, entre -180 y 180 (180 incluido). Lo que no es
+    /// finito da NaN, que no pasa ninguna comparación.
+    static func diferenciaAngular(_ a: Double, _ b: Double) -> Double {
+        var diferencia = (a - b).truncatingRemainder(dividingBy: 360)
+        if diferencia > 180 {
+            diferencia -= 360
+        } else if diferencia <= -180 {
+            diferencia += 360
+        }
+        return diferencia
     }
 
     /// Dirección de una calle respecto al sentido de la marcha, en 1/256 de

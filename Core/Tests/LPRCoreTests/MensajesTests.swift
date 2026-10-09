@@ -348,12 +348,100 @@ final class MensajesTests: XCTestCase {
         // Dice 2 calles pero llega una entera: se lee esa
         XCTAssertEqual(MensajeCruces.decodificar([0x01, 0x00, 0x05, 0x02, 0x00, 0x00, 0x0A, 0x00, 0x40, 0x01])?.calles,
                        [CalleCruce(x: 0, y: 10, direccion: 64)])
-        // Lo que sobra tras las n calles se ignora
+        // Lo que sobra tras las n calles, si no es un bloque de anillos entero
+        // (v0.8), se ignora
         XCTAssertEqual(MensajeCruces.decodificar([0x01, 0x00, 0x05, 0x01, 0x00, 0x00, 0x0A, 0x00, 0x40, 0x99, 0x99,
                                                   0x99, 0x99, 0x99])?.calles,
                        [CalleCruce(x: 0, y: 10, direccion: 64)])
         XCTAssertNil(MensajeCruces.decodificar([0x01, 0x03, 0x07]))
         XCTAssertNil(MensajeCruces.decodificar([0x02, 0x03, 0x07, 0x00]))
+    }
+
+    // MARK: CRUCES con anillos (v0.8)
+
+    func testCrucesConAnillosCodifica() {
+        // Una calle en (0, 120) a la derecha y un anillo de 15,6 m (16) con el
+        // centro en (-20, 150)
+        let mensaje = MensajeCruces(secuencia: 3, trazo: 7, calles: [CalleCruce(x: 0, y: 120, direccion: 64)],
+                                    anillos: [AnilloCruce(x: -20, y: 150, radio: 15.6)])
+        XCTAssertEqual(mensaje.codificar(), [
+            0x01, 0x03, 0x07, 0x01,
+            0x00, 0x00, 0x78, 0x00, 0x40,
+            0x01,
+            0xEC, 0xFF, 0x96, 0x00, 0x10,
+        ])
+        // Sin anillos, como antes de la v0.8: acaba tras las calles
+        XCTAssertEqual(MensajeCruces(secuencia: 3, trazo: 7, calles: [CalleCruce(x: 0, y: 120, direccion: 64)]).codificar(),
+                       [0x01, 0x03, 0x07, 0x01, 0x00, 0x00, 0x78, 0x00, 0x40])
+        // Solo anillos
+        XCTAssertEqual(MensajeCruces(secuencia: 0, trazo: 2, calles: [],
+                                     anillos: [AnilloCruce(x: 0, y: 40, radio: 8)]).codificar(),
+                       [0x01, 0x00, 0x02, 0x00, 0x01, 0x00, 0x00, 0x28, 0x00, 0x08])
+    }
+
+    func testCrucesConAnillosRadio() {
+        // El radio se redondea y se satura entre 1 y 255 m
+        func radio(_ metros: Double) -> UInt8? {
+            MensajeCruces(secuencia: 0, trazo: 0, calles: [], anillos: [AnilloCruce(x: 0, y: 0, radio: metros)])
+                .codificar().last
+        }
+        XCTAssertEqual(radio(300), 0xFF)
+        XCTAssertEqual(radio(254.6), 0xFF)
+        XCTAssertEqual(radio(0.2), 0x01)
+        XCTAssertEqual(radio(-5), 0x01)
+        XCTAssertEqual(radio(.nan), 0x01)
+        XCTAssertEqual(radio(12.4), 0x0C)
+    }
+
+    func testCrucesConAnillosNoPasaDe179() {
+        let muchas = (0..<40).map { CalleCruce(x: 0, y: Double($0), direccion: 0) }
+        let anillos = (0..<5).map { AnilloCruce(x: Double($0), y: 100, radio: 10) }
+        // Con 4 anillos (como mucho), 30 calles: 4 + 150 + 1 + 20 = 175 bytes
+        let cuatro = MensajeCruces(secuencia: 0, trazo: 0, calles: muchas, anillos: anillos).codificar(maximo: 512)
+        XCTAssertEqual(cuatro.count, 175)
+        XCTAssertEqual(cuatro[3], 30)
+        XCTAssertEqual(cuatro[154], 4)
+        XCTAssertEqual(Array(cuatro.suffix(5)), [0x03, 0x00, 0x64, 0x00, 0x0A])
+        // Con uno, 33 calles: 4 + 165 + 1 + 5 = 175
+        let uno = MensajeCruces(secuencia: 0, trazo: 0, calles: muchas, anillos: [anillos[0]]).codificar()
+        XCTAssertEqual(uno.count, 175)
+        XCTAssertEqual(uno[3], 33)
+        XCTAssertEqual(uno[169], 1)
+        // Con el MTU mínimo (20 bytes) y un anillo, 2 calles: las más cercanas
+        let corto = MensajeCruces(secuencia: 0, trazo: 0, calles: muchas, anillos: [anillos[0]]).codificar(maximo: 20)
+        XCTAssertEqual(corto.count, 20)
+        XCTAssertEqual(corto[3], 2)
+        XCTAssertEqual(corto[14], 1)
+        // Si no cabe ni un anillo, el mensaje acaba tras las calles
+        let sinSitio = MensajeCruces(secuencia: 0, trazo: 0, calles: muchas, anillos: [anillos[0]]).codificar(maximo: 9)
+        XCTAssertEqual(sinSitio.count, 9)
+        XCTAssertEqual(sinSitio[3], 1)
+        XCTAssertEqual(MensajeCruces.callesQueCaben(179, anillos: 4), 30)
+        XCTAssertEqual(MensajeCruces.callesQueCaben(512, anillos: 9), 30)
+        XCTAssertEqual(MensajeCruces.callesQueCaben(179, anillos: 1), 33)
+        XCTAssertEqual(MensajeCruces.callesQueCaben(179), 35)
+        XCTAssertEqual(MensajeCruces.callesQueCaben(20, anillos: 1), 2)
+        XCTAssertEqual(MensajeCruces.anillosQueCaben(512), 4)
+        XCTAssertEqual(MensajeCruces.anillosQueCaben(20), 3)
+        XCTAssertEqual(MensajeCruces.anillosQueCaben(9), 0)
+    }
+
+    func testCrucesConAnillosDecodifica() {
+        let original = MensajeCruces(secuencia: 3, trazo: 7, calles: [CalleCruce(x: 0, y: 120, direccion: 64)],
+                                     anillos: [AnilloCruce(x: -20, y: 150, radio: 16), AnilloCruce(x: 5, y: 300, radio: 40)])
+        XCTAssertEqual(MensajeCruces.decodificar(original.codificar()), original)
+        XCTAssertEqual(MensajeCruces.decodificar([0x01, 0x00, 0x05, 0x01, 0x00, 0x00, 0x0A, 0x00, 0x40,
+                                                  0x01, 0xEC, 0xFF, 0x96, 0x00, 0x10]),
+                       MensajeCruces(secuencia: 0, trazo: 5, calles: [CalleCruce(x: 0, y: 10, direccion: 64)],
+                                     anillos: [AnilloCruce(x: -20, y: 150, radio: 16)]))
+        // Dice 9 anillos: se leen como mucho 4
+        let nueve: [UInt8] = [0x01, 0x00, 0x05, 0x00, 0x09] + (0..<5).flatMap { _ in [0x00, 0x00, 0x0A, 0x00, 0x05] as [UInt8] }
+        XCTAssertEqual(MensajeCruces.decodificar(nueve)?.anillos.count, 4)
+        // Un anillo a medias no se lee
+        XCTAssertEqual(MensajeCruces.decodificar([0x01, 0x00, 0x05, 0x00, 0x01, 0xEC, 0xFF, 0x96, 0x00])?.anillos, [])
+        // Si faltan calles, lo que sigue no se lee como anillos
+        XCTAssertEqual(MensajeCruces.decodificar([0x01, 0x00, 0x05, 0x02, 0x00, 0x00, 0x0A, 0x00, 0x40, 0x01])?.anillos,
+                       [])
     }
 
     // MARK: NAV_TEXT
@@ -419,6 +507,15 @@ final class MensajesTests: XCTestCase {
         // 0x01EF: el cuadro 0.3.0, también con GPS (v0.7)
         let conGPS = DeviceInfo.decodificar([0x01, 0x01, 0xEF, 0x01, 0x00, 0x00, 0x03, 0x00])
         XCTAssertEqual(conGPS?.capacidades, [.nav, .gps, .status, .navText, .movil, .trazo, .movilAlCambiar, .cruces])
+    }
+
+    func testDeviceInfoDelCuadroConAnillos() {
+        // 0x03EF: el cuadro 0.4.0, también con los anillos (v0.8)
+        let info = DeviceInfo.decodificar([0x01, 0x01, 0xEF, 0x03, 0x00, 0x00, 0x04, 0x00])
+        XCTAssertEqual(info?.capacidades, [.nav, .gps, .status, .navText, .movil, .trazo, .movilAlCambiar, .cruces,
+                                           .anillos])
+        XCTAssertEqual(info?.firmware, [0, 4, 0])
+        XCTAssertEqual(Capacidades.anillos.rawValue, 0x0200)
     }
 
     func testDeviceInfoDescartaLoCorto() {

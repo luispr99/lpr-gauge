@@ -562,6 +562,8 @@ final class EnlaceBLE: NSObject, ObservableObject {
             anotar("La placa no admite TRAZO (tramo de ruta)")
         } else if !admiteCruces {
             anotar("La placa no admite CRUCES (calles del tramo)")
+        } else if !admiteAnillos {
+            anotar("La placa no dibuja los anillos de las rotondas (CRUCES v0.8)")
         }
         if !conNav {
             anotar("La placa no admite NAV (siguiente maniobra)")
@@ -821,10 +823,13 @@ final class EnlaceBLE: NSObject, ObservableObject {
     private var escalaTrazo: UInt8 = 0
     /// Calles de los cruces del último tramo puesto, en sus mismos ejes.
     private var callesTrazo: [CalleCruce] = []
-    /// Las calles del último TRAZO mandado y su secuencia: CRUCES sale justo
-    /// después con ella. Se guardan aparte porque, si iOS no tiene hueco,
-    /// CRUCES sale más tarde y entretanto puede llegar otro tramo.
-    private var crucesDelTrazo: (trazo: UInt8, calles: [CalleCruce])?
+    /// Anillos de las rotondas del último tramo puesto (v0.8), en sus mismos
+    /// ejes.
+    private var anillosTrazo: [AnilloCruce] = []
+    /// Las calles y los anillos del último TRAZO mandado y su secuencia:
+    /// CRUCES sale justo después con ella. Se guardan aparte porque, si iOS no
+    /// tiene hueco, CRUCES sale más tarde y entretanto puede llegar otro tramo.
+    private var crucesDelTrazo: (trazo: UInt8, calles: [CalleCruce], anillos: [AnilloCruce])?
 
     /// Si la placa conectada admite TRAZO: si no, no hace falta calcularlo.
     var admiteTrazo: Bool {
@@ -837,24 +842,37 @@ final class EnlaceBLE: NSObject, ObservableObject {
         admiteTrazo && caracCruces != nil && info?.capacidades.contains(.cruces) == true
     }
 
+    /// Si la placa conectada dibuja los anillos de las rotondas (bit 9, v0.8;
+    /// siempre con CRUCES): si no, no se mandan y las calles van sin quitar
+    /// las del anillo.
+    var admiteAnillos: Bool {
+        admiteCruces && info?.capacidades.contains(.anillos) == true
+    }
+
     /// Cuántos puntos caben en un TRAZO con la conexión actual (como mucho, 44).
     var puntosTrazoQueCaben: Int {
         guard let periferico, estado == .conectado else { return MensajeTrazo.maximoPuntos }
         return MensajeTrazo.puntosQueCaben(periferico.maximumWriteValueLength(for: .withoutResponse))
     }
 
-    /// Cuántas calles caben en un CRUCES con la conexión actual (como mucho, 35).
-    var callesCrucesQueCaben: Int {
-        guard let periferico, estado == .conectado else { return MensajeCruces.maximoCalles }
-        return MensajeCruces.callesQueCaben(periferico.maximumWriteValueLength(for: .withoutResponse))
+    /// Cuántas calles caben en un CRUCES con la conexión actual (como mucho,
+    /// 35) si lleva esos anillos detrás (v0.8: los anillos van primero; con
+    /// 0, sin bloque de anillos).
+    func callesCrucesQueCaben(anillos: Int) -> Int {
+        guard let periferico, estado == .conectado else {
+            return MensajeCruces.callesQueCaben(MensajeCruces.longitudMaxima, anillos: anillos)
+        }
+        return MensajeCruces.callesQueCaben(periferico.maximumWriteValueLength(for: .withoutResponse), anillos: anillos)
     }
 
     /// Tramo de ruta por delante (lo pone Navegacion en cada posición), en los
-    /// ejes de la moto, con su nivel de escala y las calles de sus cruces; nil
+    /// ejes de la moto, con su nivel de escala, las calles de sus cruces y los
+    /// anillos de sus rotondas (solo se mandan si la placa los admite); nil
     /// sin tramo. Se manda al cambiar, como mucho una vez por segundo: lo que
     /// llegue antes queda guardado y sale en cuanto pase el segundo (mantener,
     /// cada 0,5 s); al dejar de haberlo, una vez sin tramo para borrarlo.
-    func ponerTrazo(_ tramo: (puntos: [PuntoPlano], giro: Int?)?, escala: UInt8 = 0, calles: [CalleCruce] = []) {
+    func ponerTrazo(_ tramo: (puntos: [PuntoPlano], giro: Int?)?, escala: UInt8 = 0, calles: [CalleCruce] = [],
+                    anillos: [AnilloCruce] = []) {
         guard let tramo, tramo.puntos.count >= 2 else {
             guard trazoActivo else { return }
             trazoActivo = false
@@ -863,6 +881,7 @@ final class EnlaceBLE: NSObject, ObservableObject {
             giroTrazo = nil
             escalaTrazo = 0
             callesTrazo = []
+            anillosTrazo = []
             enviarTrazo()
             return
         }
@@ -871,6 +890,7 @@ final class EnlaceBLE: NSObject, ObservableObject {
         giroTrazo = tramo.giro
         escalaTrazo = escala
         callesTrazo = calles
+        anillosTrazo = anillos
         if nuevo { trazoActivo = true }
         if nuevo || ultimoTrazo.map({ Date().timeIntervalSince($0) >= Self.cambioMinimo }) ?? true {
             enviarTrazo()
@@ -901,7 +921,9 @@ final class EnlaceBLE: NSObject, ObservableObject {
         // Justo después, sus cruces, con su secuencia (§7 quater). Sin tramo no
         // hacen falta: la placa no dibuja los de otro tramo
         if trazoActivo && admiteCruces {
-            crucesDelTrazo = (trazo: mensaje.secuencia, calles: callesTrazo)
+            // Los anillos, solo si la placa anuncia el bit 9 (v0.8)
+            crucesDelTrazo = (trazo: mensaje.secuencia, calles: callesTrazo,
+                              anillos: admiteAnillos ? anillosTrazo : [])
             enviarCruces()
         } else {
             crucesDelTrazo = nil
@@ -919,13 +941,15 @@ final class EnlaceBLE: NSObject, ObservableObject {
         crucesPendiente = false
         self.crucesDelTrazo = nil
         let mensaje = MensajeCruces(secuencia: secuenciaCruces.siguiente(), trazo: crucesDelTrazo.trazo,
-                                    calles: crucesDelTrazo.calles)
+                                    calles: crucesDelTrazo.calles, anillos: crucesDelTrazo.anillos)
         let bytes = mensaje.codificar(maximo: periferico.maximumWriteValueLength(for: .withoutResponse))
         periferico.writeValue(Data(bytes), for: caracCruces, type: .withoutResponse)
         if !primerCrucesAnotado {
             primerCrucesAnotado = true
-            // Sin las posiciones: solo cuántas calles
-            anotar("CRUCES enviado (seq \(mensaje.secuencia), \(bytes[3]) calles, \(bytes.count) bytes)")
+            // Sin las posiciones: solo cuántas calles y cuántos anillos
+            let calles = Int(bytes[3])
+            let anillos = bytes.count > 4 + 5 * calles ? Int(bytes[4 + 5 * calles]) : 0
+            anotar("CRUCES enviado (seq \(mensaje.secuencia), \(calles) calles, \(anillos) anillos, \(bytes.count) bytes)")
         }
     }
 

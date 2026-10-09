@@ -93,6 +93,142 @@ final class CrucesTests: XCTestCase {
         XCTAssertEqual(RespuestaOSRM.via(nombre: "  ", numero: nil), "")
     }
 
+    // MARK: entry y regla 1 (0.12.0)
+
+    /// Un cruce de la respuesta OSRM, como lo da Valhalla.
+    private func interseccion(_ p: PuntoRuta, _ rumbos: [Int], entry: [Bool]? = nil, entrada: Int? = nil,
+                              salida: Int? = nil, indice: Int) -> [String: Any] {
+        var cruce: [String: Any] = ["location": [p.longitud, p.latitud], "bearings": rumbos, "geometry_index": indice]
+        if let entry { cruce["entry"] = entry }
+        if let entrada { cruce["in"] = entrada }
+        if let salida { cruce["out"] = salida }
+        return cruce
+    }
+
+    /// Una respuesta OSRM de una sola ruta con estos pasos.
+    private func respuestaOSRM(_ puntos: [PuntoRuta], pasos: [[String: Any]]) throws -> Data {
+        let ruta: [String: Any] = ["geometry": Polilinea.codificar(puntos, precision: 6), "legs": [["steps": pasos]]]
+        let respuesta: [String: Any] = ["code": "Ok", "routes": [ruta]]
+        return try JSONSerialization.data(withJSONObject: respuesta)
+    }
+
+    func testEntryDeCadaCalle() throws {
+        // Hacia el norte, un cruce cada 100 m: con entry, con todas las
+        // laterales sin entrada (regla 1), con una sola sin entrada, sin entry
+        // y con un entry de otra longitud que bearings
+        let puntos = (0...6).map { punto(0, Double($0) * 100) }
+        let datos = try respuestaOSRM(puntos, pasos: [
+            ["intersections": [
+                interseccion(puntos[0], [0], entry: [true], salida: 0, indice: 0),
+                interseccion(puntos[1], [0, 90, 180, 270], entry: [true, false, false, true], entrada: 2, salida: 0,
+                             indice: 1),
+                interseccion(puntos[2], [0, 90, 180, 270], entry: [true, false, false, false], entrada: 2, salida: 0,
+                             indice: 2),
+                interseccion(puntos[3], [0, 90, 180], entry: [true, false, false], entrada: 2, salida: 0, indice: 3),
+            ]],
+            ["maneuver": ["type": "turn"], "intersections": [
+                interseccion(puntos[4], [0, 90, 180, 270], entrada: 2, salida: 0, indice: 4),
+                interseccion(puntos[5], [0, 90, 180, 270], entry: [true, true], entrada: 2, salida: 0, indice: 5),
+                interseccion(puntos[6], [180], entry: [true], entrada: 0, indice: 6),
+            ]],
+        ])
+        let ruta = try XCTUnwrap(RespuestaOSRM.rutas(de: datos).first)
+        // El de 200 m no está: sus dos laterales son de no entrar (aceras)
+        let esperados = [puntos[1], puntos[3], puntos[4], puntos[5]]
+        XCTAssertEqual(ruta.cruces.count, esperados.count)
+        for (cruce, esperado) in zip(ruta.cruces, esperados) {
+            XCTAssertEqual(Trazo.distancia(cruce.punto, esperado), 0, accuracy: 0.01)
+        }
+        XCTAssertEqual(ruta.cruces[0].rumbos, [90, 270])
+        XCTAssertEqual(ruta.cruces[0].entradas, [false, true])
+        // Una sola sin entrada (una calle de un sentido que llega) se queda
+        XCTAssertEqual(ruta.cruces[1].rumbos, [90])
+        XCTAssertEqual(ruta.cruces[1].entradas, [false])
+        // Sin entry, o con otra longitud: desconocidas
+        XCTAssertEqual(ruta.cruces[2].entradas, [nil, nil])
+        XCTAssertEqual(ruta.cruces[3].rumbos, [90, 270])
+        XCTAssertEqual(ruta.cruces[3].entradas, [nil, nil])
+        XCTAssertTrue(ruta.anillos.isEmpty)
+        XCTAssertEqual(ruta.crucesConAnillos, ruta.cruces)
+    }
+
+    func testEntradasDeUnCruce() {
+        let cruce = Cruce(punto: punto(0, 0), rumbos: [90, 270], entradas: [true, false])
+        XCTAssertEqual(cruce.entrada(0), true)
+        XCTAssertEqual(cruce.entrada(1), false)
+        XCTAssertNil(cruce.entrada(2))
+        XCTAssertNil(cruce.entrada(-1))
+        // Con otra longitud que los rumbos, o sin dar: desconocidas
+        XCTAssertEqual(Cruce(punto: punto(0, 0), rumbos: [90, 270], entradas: [true]).entradas, [nil, nil])
+        XCTAssertEqual(Cruce(punto: punto(0, 0), rumbos: [90]).entradas, [nil])
+    }
+
+    // MARK: Rotonda en la respuesta (0.12.0)
+
+    func testRotondaDeLaRespuesta() throws {
+        // Hacia el norte, una rotonda de 20 m de radio con el centro en
+        // (0, 100): se entra por el sur, en (0, 80), se recorre por el este
+        // (13 puntos, cada 15°) y se sale por el norte, en (0, 120)
+        let centro = (x: 0.0, y: 100.0)
+        func enAnillo(_ grados: Double) -> PuntoRuta {
+            punto(centro.x + 20 * cos(grados * .pi / 180), centro.y + 20 * sin(grados * .pi / 180))
+        }
+        let arco = stride(from: -90.0, through: 90.0, by: 15).map { enAnillo($0) }
+        let puntos = [punto(0, 0), punto(0, 40)] + arco + [punto(0, 160), punto(0, 200)]
+        XCTAssertEqual(puntos.count, 17)
+        let datos = try respuestaOSRM(puntos, pasos: [
+            ["maneuver": ["type": "depart"], "intersections": [
+                interseccion(puntos[0], [0], entry: [true], salida: 0, indice: 0),
+            ]],
+            ["maneuver": ["type": "roundabout", "exit": 2] as [String: Any], "intersections": [
+                // La entrada: el anillo que llega del oeste (278) es de no entrar
+                interseccion(puntos[2], [83, 180, 278], entry: [true, false, false], entrada: 1, salida: 0, indice: 2),
+                // Un brazo al este, en (20, 100)
+                interseccion(puntos[8], [90, 188, 353], entry: [true, false, true], entrada: 1, salida: 2, indice: 8),
+            ]],
+            ["maneuver": ["type": "exit roundabout"], "intersections": [
+                // La salida: el anillo sigue hacia el oeste (263)
+                interseccion(puntos[14], [0, 98, 263], entry: [true, false, true], entrada: 1, salida: 0, indice: 14),
+                interseccion(puntos[15], [0, 90, 180, 270], entry: [true, true, false, true], entrada: 2, salida: 0,
+                             indice: 15),
+            ]],
+            ["maneuver": ["type": "arrive"], "intersections": [
+                interseccion(puntos[16], [180], entry: [true], entrada: 0, indice: 16),
+            ]],
+        ])
+        let ruta = try XCTUnwrap(RespuestaOSRM.rutas(de: datos).first)
+        let anillo = try XCTUnwrap(ruta.anillos.first)
+        XCTAssertEqual(ruta.anillos.count, 1)
+        XCTAssertEqual(Trazo.distancia(anillo.centro, punto(centro.x, centro.y)), 0, accuracy: 0.2)
+        XCTAssertEqual(anillo.radio, 20, accuracy: 0.15)
+        XCTAssertEqual(anillo.recorridoEntrada, 80, accuracy: 0.5)
+        // 12 cuerdas de 2·20·sen(7,5°) = 5,22 m
+        XCTAssertEqual(anillo.recorridoSalida, 80 + 12 * 40 * sin(7.5 * .pi / 180), accuracy: 0.5)
+        // Son de la rotonda los cruces de su paso y el primero del siguiente
+        XCTAssertEqual(ruta.cruces.map(\.rumbos), [[278], [90], [263], [90, 270]])
+        XCTAssertEqual(ruta.cruces.map(\.anillo), [0, 0, 0, nil])
+        // Para un cuadro con anillos, sin las calles que son el anillo
+        XCTAssertEqual(ruta.crucesConAnillos.map(\.rumbos), [[90], [90, 270]])
+    }
+
+    func testRotondaSinAnilloSiNoEsUnCirculo() throws {
+        // La misma forma de respuesta, pero el «arco» es una recta: sin anillo
+        // y sin tocar los cruces
+        let puntos = (0...8).map { punto(0, Double($0) * 10) }
+        let datos = try respuestaOSRM(puntos, pasos: [
+            ["maneuver": ["type": "rotary"], "intersections": [
+                interseccion(puntos[1], [0, 180, 270], entry: [true, false, false], entrada: 1, salida: 0, indice: 1),
+            ]],
+            ["maneuver": ["type": "exit rotary"], "intersections": [
+                interseccion(puntos[7], [0, 90, 180], entry: [true, true, false], entrada: 2, salida: 0, indice: 7),
+            ]],
+        ])
+        let ruta = try XCTUnwrap(RespuestaOSRM.rutas(de: datos).first)
+        XCTAssertTrue(ruta.anillos.isEmpty)
+        XCTAssertEqual(ruta.cruces.map(\.anillo), [nil, nil])
+        XCTAssertEqual(ruta.crucesConAnillos, ruta.cruces)
+    }
+
     func testNoEsUnaRespuestaOSRM() {
         // El formato propio de Valhalla (el de las rutas propuestas) no vale
         XCTAssertThrowsError(try RespuestaOSRM.rutas(de: Data(#"{"trip":{"legs":[]}}"#.utf8)))
@@ -179,6 +315,73 @@ final class CrucesTests: XCTestCase {
         comprobar(Cruces.calles(de: cruces, ruta: rutaNorte, sentido: 0, ventana: 500...800), [(0, 100, 192)])
         // Sin ventana, también el de la otra pasada; el de detrás, nunca
         comprobar(Cruces.calles(de: cruces, ruta: rutaNorte, sentido: 0), [(0, 100, 64), (0, 100, 192)])
+    }
+
+    // MARK: Regla 2: rayas dobles (0.12.0)
+
+    func testRayasDoblesSeQuedaLaDeEntrar() {
+        // A 100 y 110 m, dos calles a la derecha casi paralelas (90° y 95°):
+        // se queda la de 110, por la que se puede entrar. La de 120, a la
+        // izquierda, no es doble. La de 150 (92°) está a 50 m de la primera y a
+        // 40 de la de 110: tampoco. 95° es 68/256 de vuelta (67,6); 92°, 65
+        let cruces = [
+            Cruce(punto: punto(0, 100), rumbos: [90], entradas: [false]),
+            Cruce(punto: punto(0, 110), rumbos: [95], entradas: [true]),
+            Cruce(punto: punto(0, 120), rumbos: [270], entradas: [true]),
+            Cruce(punto: punto(0, 150), rumbos: [92], entradas: [false]),
+        ]
+        comprobar(Cruces.calles(de: cruces, ruta: rutaNorte, sentido: 0),
+                  [(0, 110, 68), (0, 120, 192), (0, 150, 65)])
+    }
+
+    func testRayasDoblesSinEntradaSeQuedaLaPrimera() {
+        // Sin ninguna por la que se pueda entrar (false o sin saber), la primera
+        let cruces = [
+            Cruce(punto: punto(0, 100), rumbos: [90], entradas: [false]),
+            Cruce(punto: punto(0, 105), rumbos: [100]),
+        ]
+        comprobar(Cruces.calles(de: cruces, ruta: rutaNorte, sentido: 0), [(0, 100, 64)])
+    }
+
+    func testRayasDoblesEnElMismoCruce() {
+        // Dos calles del mismo cruce a 20°: una (la de entrar, 110°: 78/256).
+        // A 35°, las dos (125°: 89/256)
+        comprobar(Cruces.calles(de: [Cruce(punto: punto(0, 100), rumbos: [90, 110], entradas: [nil, true])],
+                                ruta: rutaNorte, sentido: 0),
+                  [(0, 100, 78)])
+        comprobar(Cruces.calles(de: [Cruce(punto: punto(0, 100), rumbos: [90, 125])], ruta: rutaNorte, sentido: 0),
+                  [(0, 100, 64), (0, 100, 89)])
+    }
+
+    func testRayasDoblesAncladasEnLaPrimera() {
+        // 90° a 100 m, 115° a 120 m y 140° a 140 m: la segunda va con la
+        // primera (25°, 20 m), pero la tercera no (está a 40 m de la primera,
+        // aunque a 20 de la segunda): no se encadenan. 140° son 100/256 (99,6)
+        let cruces = [
+            Cruce(punto: punto(0, 100), rumbos: [90]),
+            Cruce(punto: punto(0, 120), rumbos: [115]),
+            Cruce(punto: punto(0, 140), rumbos: [140]),
+        ]
+        comprobar(Cruces.calles(de: cruces, ruta: rutaNorte, sentido: 0), [(0, 100, 64), (0, 140, 100)])
+    }
+
+    func testRayasDoblesAntesDelMaximo() {
+        // Con 2 como máximo: la doble no gasta sitio
+        let cruces = [
+            Cruce(punto: punto(0, 100), rumbos: [90], entradas: [false]),
+            Cruce(punto: punto(0, 105), rumbos: [92], entradas: [true]),
+            Cruce(punto: punto(0, 200), rumbos: [270]),
+        ]
+        comprobar(Cruces.calles(de: cruces, ruta: rutaNorte, sentido: 0, maximo: 2), [(0, 105, 65), (0, 200, 192)])
+    }
+
+    func testDiferenciaAngular() {
+        XCTAssertEqual(Cruces.diferenciaAngular(10, 350), 20, accuracy: 1e-9)
+        XCTAssertEqual(Cruces.diferenciaAngular(350, 10), -20, accuracy: 1e-9)
+        XCTAssertEqual(Cruces.diferenciaAngular(180, 0), 180, accuracy: 1e-9)
+        XCTAssertEqual(Cruces.diferenciaAngular(0, 180), 180, accuracy: 1e-9)
+        XCTAssertEqual(Cruces.diferenciaAngular(720, 5), -5, accuracy: 1e-9)
+        XCTAssertTrue(Cruces.diferenciaAngular(.nan, 0).isNaN)
     }
 
     func testSinTramoNiCruces() {

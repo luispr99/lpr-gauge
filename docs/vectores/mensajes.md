@@ -1,7 +1,7 @@
 # Vectores de prueba del protocolo
 
 Ejemplos de mensajes con sus bytes exactos, en hexadecimal y en el orden en que
-viajan. Salen de [PROTOCOLO.md](../PROTOCOLO.md) (v0.6). Las pruebas de `Core`
+viajan. Salen de [PROTOCOLO.md](../PROTOCOLO.md) (v0.8). Las pruebas de `Core`
 (`Core/Tests/LPRCoreTests/MensajesTests.swift`) comprueban estos mismos bytes; el
 firmware y la app de Android deberán pasar los mismos. Si cambia un vector,
 cambian a la vez el documento, las pruebas y este fichero.
@@ -105,14 +105,29 @@ medianoche y longitud del paso (todos `u16`).
 |---|---|
 | Sin calles, secuencia 0, del `TRAZO` 0 | `01 00 00 00` |
 | Secuencia 3, del `TRAZO` 7: dos calles en (0, 120), a la derecha (64) y a la izquierda (192), y una en (−15,4; 300,6) a la izquierda, algo hacia delante (200: 281°) | `01 03 07 03 00 00 78 00 40 00 00 78 00 C0 F1 FF 2D 01 C8` |
+| v0.8, secuencia 3, del `TRAZO` 7: una calle en (0, 120) a la derecha y un anillo con el centro en (−20, 150) y 15,6 m de radio (16) | `01 03 07 01 00 00 78 00 40 01 EC FF 96 00 10` |
+| v0.8, secuencia 0, del `TRAZO` 2: sin calles y un anillo en (0, 40) de 8 m | `01 00 02 00 01 00 00 28 00 08` |
 
 - Coordenadas como en `TRAZO` (se redondean y se saturan igual); la dirección,
   en 1/256 de vuelta.
 - Como mucho 35 calles (179 bytes). Con 20 bytes por escritura caben 3; se
   recorta por el final, así que se quedan las de los cruces más cercanos.
 - Al decodificar, se leen como mucho `n` calles y solo las que llegan enteras
-  (`01 00 05 02 00 00 0A 00 40 01`: una calle, (0, 10) a la derecha); lo que
-  sobra se ignora. Se descartan `01 03 07` (corto) y la versión 2.
+  (`01 00 05 02 00 00 0A 00 40 01`: una calle, (0, 10) a la derecha). Se
+  descartan `01 03 07` (corto) y la versión 2.
+- **Anillos (v0.8):** tras las `n` calles, un byte con cuántos (0 a 4) y 5 por
+  anillo: centro (`i16`, `i16`) y radio (`u8`, redondeado y saturado entre 1
+  y 255 m: 300 m va como `FF` y 0,2 m como `01`). Sin anillos, el mensaje
+  acaba tras las calles, como antes. Solo se mandan si el dispositivo anuncia
+  el bit 9 de capacidades.
+- Con anillos, el mensaje entero tampoco pasa de 179 bytes y los anillos van
+  primero: con 4 anillos caben 30 calles (175 bytes); con 1, 33 (175 bytes);
+  con 20 bytes por escritura y un anillo, 2 calles (20 bytes). Si no cabe ni
+  un anillo (9 bytes), el mensaje acaba tras las calles.
+- Al decodificar los anillos: solo si han llegado las `n` calles y queda algo
+  detrás; como mucho 4 (`01 00 05 00 09` y cinco anillos enteros: se leen 4),
+  y solo los que llegan enteros (`01 00 05 00 01 EC FF 96 00`: ninguno). Un
+  dispositivo anterior a la v0.8 lee las `n` calles e ignora el resto.
 
 ## `GPS`
 
@@ -134,5 +149,6 @@ medianoche y longitud del paso (todos `u16`).
 | Cuadro, primera integración LPR | `01 01 2C 00 00 00 01 00` | 1 | `STATUS` + `NAV_TEXT` + `MOVIL` (0x002C) | sin límite | 0.1.0 |
 | Cuadro con el trazo y MOVIL al cambiar | `01 01 EC 00 00 00 02 00` | 1 | `STATUS` + `NAV_TEXT` + `MOVIL` + `TRAZO` + MOVIL al cambiar (0x00EC) | sin límite | 0.2.0 |
 | Cuadro con `NAV`, `GPS` y `CRUCES` | `01 01 EF 01 00 00 03 00` | 1 | `NAV` + `GPS` + `STATUS` + `NAV_TEXT` + `MOVIL` + `TRAZO` + MOVIL al cambiar + `CRUCES` (0x01EF) | sin límite | 0.3.0 |
+| Cuadro con todo, también los anillos (v0.8) | `01 01 EF 03 00 00 04 00` | 1 | las de 0.3.0 + anillos (0x03EF) | sin límite | 0.4.0 |
 
 - Se descarta cualquier mensaje de menos de 8 bytes.

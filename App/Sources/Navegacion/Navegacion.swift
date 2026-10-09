@@ -849,13 +849,24 @@ final class Navegacion: ObservableObject {
                         return max(0, moto - 50)...(moto + Trazo.metrosTramo(nivel: calculo.nivel))
                     }
                 }
+                // Con un cuadro que dibuja los anillos de las rotondas (v0.8),
+                // los de este tramo, con la misma ventana, y las calles sin las
+                // del anillo (RutaConCruces.crucesConAnillos)
+                let conAnillos = enlace.admiteAnillos
+                var anillos: [AnilloCruce] = []
+                if conAnillos, let rutaCruces, let ventana {
+                    anillos = Cruces.anillos(de: rutaCruces.anillos, ruta: calculo.tramo.ruta,
+                                             sentido: calculo.tramo.sentido, ventana: ventana)
+                }
+                let cruces = (conAnillos ? rutaCruces?.crucesConAnillos : rutaCruces?.cruces) ?? []
                 let calles = enlace.admiteCruces
-                    ? Cruces.calles(de: rutaCruces?.cruces ?? [], ruta: calculo.tramo.ruta,
-                                    sentido: calculo.tramo.sentido, maximo: enlace.callesCrucesQueCaben,
+                    ? Cruces.calles(de: cruces, ruta: calculo.tramo.ruta,
+                                    sentido: calculo.tramo.sentido,
+                                    maximo: enlace.callesCrucesQueCaben(anillos: anillos.count),
                                     ventana: ventana)
                     : []
                 enlace.ponerTrazo((puntos: calculo.tramo.puntos, giro: calculo.tramo.giro),
-                                  escala: UInt8(calculo.nivel), calles: calles)
+                                  escala: UInt8(calculo.nivel), calles: calles, anillos: anillos)
             } else {
                 enlace.ponerTrazo(nil)
             }

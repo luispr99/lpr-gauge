@@ -531,6 +531,78 @@ final.
 - **Cuadro:** se hace en su proyecto (el código no entra en este
   repositorio): `docs/CAMBIOS_CLAUDE.md`, sección 76.
 
+### 2026-10-09 · Calles sin rayas dobles y rotondas enteras (0.12.0)
+
+- **Petición del autor:** en la cara de navegación, las calles de todo el
+  trayecto, pero sin rayas dobles; y las rotondas, enteras.
+- **Causa de las rayas dobles (comprobada el 2026-10-09 con respuestas reales
+  de Valhalla en formato OSRM):** en `bearings` viene una calle por cada vía
+  de OpenStreetMap del nodo, también las aceras, los pasos de peatones, los
+  carriles bici y la otra calzada de las avenidas, y la app las dibujaba
+  todas. Las respuestas del estudio no entran en el repositorio (son datos de
+  OpenStreetMap, con licencia ODbL, y el repositorio es público): las pruebas
+  usan datos inventados.
+- **Dos reglas, solo con lo que trae la respuesta** (`entry` de cada calle,
+  su rumbo y su posición en la ruta):
+  - regla 1, al leer la respuesta: si un cruce tiene dos calles laterales o
+    más y por ninguna se puede entrar (`entry` a `false` en todas), se
+    quitan (es el patrón de las aceras y los pasos de peatones). Con una sola
+    (una calle de un sentido que llega a la ruta) se queda;
+  - regla 2, al elegir las calles del tramo y antes de recortar por tamaño:
+    de cada grupo de calles casi paralelas, a 30 m o menos a lo largo de la
+    ruta y a 30° o menos de rumbo, se queda una, la primera por la que se
+    puede entrar o, si no hay, la primera. El grupo se ancla en la primera
+    que queda (no se encadenan).
+  - Con 3 rutas reales (Madrid y Segovia), de 151, 142 y 122 calles se pasa
+    a 78, 78 y 68. Se quedan el 95 % de las calles por las que se puede
+    entrar, el 80 % de las de un sentido que llegan a la ruta y el 7 % de las
+    peatonales, y no queda ninguna pareja doble. Para saber qué era cada
+    calle se usaron los atributos de `/trace_attributes`; las reglas no los
+    usan.
+- **Rotondas enteras (protocolo v0.8):**
+  - En la ruta solo viene el arco que se recorre. La app le ajusta un
+    círculo (Kåsa como inicio y después Gauss-Newton geométrico amortiguado,
+    como mucho 50 iteraciones). Comprobado: en 11 de 12 rotondas el círculo
+    del arco coincide con el anillo de OpenStreetMap a menos de 1 m; en 41 de
+    54 rotondas de 4 rutas pasa la regla de aceptación (5 puntos o más, 40° o
+    más de giro, error cuadrático medio de 0,07 m o menos y radio de 5 a
+    80 m).
+  - Con un cuadro que dibuja los anillos, en los cruces de cada rotonda con
+    anillo (los de su paso y el primero del siguiente) se quitan las calles
+    que forman más de 90° con la radial hacia fuera: son el propio anillo
+    (acertó en 91 de 92). Y los brazos con isleta (una calzada de salida
+    seguida de una de entrada, a 90° o menos vistas desde el centro, que se
+    cortan por fuera a menos de 100 m o son casi paralelas, menos de 15°, y a
+    menos de 30 m) quedan en una calle, en el anillo a medio camino y con el
+    rumbo medio.
+  - `CRUCES` lleva tras las calles un bloque opcional con hasta 4 anillos
+    (centro y radio) y el bit 9 de capacidades dice que el cuadro los dibuja
+    (`PROTOCOLO.md` §7 quater). Sin pasar de 179 bytes: con anillos caben
+    menos calles (con 4, 30). La app solo manda el bloque al cuadro que
+    anuncia el bit 9.
+  - Van los anillos que la ruta empieza a recorrer dentro de la ventana del
+    tramo y los que ha dejado hace 20 m o menos (por detrás de la ventana),
+    para que no desaparezcan dentro de la rotonda; en el orden de la ruta,
+    como mucho 4.
+- **La app 0.12.0 necesita el firmware del cuadro 0.4.0 para ver los
+  anillos** (capacidades 0x03EF). Con un cuadro anterior, las reglas 1 y 2
+  valen igual, pero las rotondas se dibujan como hasta ahora (con las calles
+  del anillo y sin el bloque).
+- **Supuestos, a ajustar en la moto:** los umbrales de las dos reglas (2
+  calles; 30 m y 30°), los de aceptación del círculo, los de las rotondas
+  (90°; 100 m; 15° y 30 m) y los 20 m por detrás de la ventana. Salen de
+  pocas rutas, todas de Madrid y Segovia.
+- **Decisiones de la implementación:**
+  - los cruces para un cuadro con anillos se calculan una vez, al leer la
+    respuesta (`RutaConCruces.crucesConAnillos`), y la app elige la lista
+    según el cuadro conectado;
+  - un cruce que fuera de dos rotondas seguidas se queda en la primera;
+  - la calle de un brazo con isleta va en el anillo, a medio camino entre
+    los dos cruces (como en el algoritmo del estudio), con el recorrido del
+    primero.
+- **Sin probar:** sin compilar en local (no hay Swift en Windows); las
+  pruebas de `Core` corren en el CI. Sin probar en el iPhone ni en la moto.
+
 ### 2026-10-09 · Navegación: servidores, buscador y Ferrostar
 
 - **Origen:** el autor propuso usar lo mismo que la web
@@ -796,6 +868,11 @@ Ferrostar:
   - que los cruces caigan sobre las calles, también tras un recálculo;
   - las flechas con rutas reales, sobre todo rotondas y cambios de sentido,
     y la hora de llegada.
+- Calles y rotondas 0.12.0 (con el cuadro 0.4.0):
+  - que no queden rayas dobles en ciudad ni se pierdan calles por las que se
+    puede entrar;
+  - que los anillos caigan sobre las rotondas y no desaparezcan dentro;
+  - los umbrales de las reglas, del círculo y de los brazos con isleta.
 
 ## Fuentes (consultadas el 2026-10-08)
 

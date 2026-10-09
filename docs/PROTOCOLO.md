@@ -1,6 +1,6 @@
 # Protocolo BLE móvil → cuadro
 
-> **Estado: borrador v0.7 (2026-10-09), sin validar.** Los puntos marcados
+> **Estado: borrador v0.8 (2026-10-09), sin validar.** Los puntos marcados
 > **[PENDIENTE]** faltan por completar. Mientras sea borrador, nada de lo que hay
 > aquí es definitivo y puede cambiar sin mantener compatibilidad. Los cambios de
 > cada versión están en la [sección 13](#13-cambios).
@@ -78,7 +78,7 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
 |---|---|---|---|
 | 0 | versión | u8 | Versión del protocolo del dispositivo: 1. |
 | 1 | tipo | u8 | 1 = cuadro de moto; 2 = firmware de referencia (solo serie). |
-| 2-3 | capacidades | u16 | Bit 0 `NAV`, bit 1 `GPS`, bit 2 `STATUS`, bit 3 `NAV_TEXT`, bit 4 `CONFIG`, bit 5 `MOVIL`, bit 6 `TRAZO`, bit 7 `MOVIL` al cambiar (sección 7), bit 8 `CRUCES`. |
+| 2-3 | capacidades | u16 | Bit 0 `NAV`, bit 1 `GPS`, bit 2 `STATUS`, bit 3 `NAV_TEXT`, bit 4 `CONFIG`, bit 5 `MOVIL`, bit 6 `TRAZO`, bit 7 `MOVIL` al cambiar (sección 7), bit 8 `CRUCES`, bit 9 anillos: dibuja los anillos de las rotondas de `CRUCES` (sección 7 quater, v0.8). |
 | 4 | frecuencia máxima | u8 | Mensajes por segundo y característica que acepta (0 = sin límite). |
 | 5-7 | versión de firmware | u8 × 3 | Mayor, menor, parche. |
 
@@ -246,9 +246,20 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
 | 2 | trazo | u8 | Secuencia del `TRAZO` al que acompaña: el dispositivo solo los dibuja con ese tramo. |
 | 3 | n | u8 | Número de calles, de 0 a 35. |
 | 4… | calles | (i16, i16, u8) × n | Por cada calle, el cruce en metros, en los mismos ejes que `TRAZO` (x a la derecha, y hacia delante, la moto en (0, 0)), y su dirección en 1/256 de vuelta, en sentido horario desde «hacia delante»: 0 delante, 64 derecha, 128 atrás, 192 izquierda. |
+| 4 + 5n | m | u8 | Opcional (v0.8): número de anillos, de 0 a 4. Si el mensaje acaba tras las calles, no hay anillos. |
+| 5 + 5n… | anillos | (i16, i16, u8) × m | Por cada anillo de rotonda, su centro en metros, en los ejes de `TRAZO` y *little-endian*, como las calles, y su radio en metros, de 1 a 255, redondeado. |
 
 - Longitud mínima: 4 bytes. Como mucho 35 calles (179 bytes) y nunca más de lo
   que admita la conexión.
+- **Tamaño con anillos (v0.8):** el mensaje entero no pasa de 179 bytes (el
+  cuadro recorta ahí): 4 + 5n + 1 + 5m ≤ 179. Con anillos caben menos calles
+  (con 4 anillos, 30). Los anillos van primero: si no cabe todo, se recortan
+  las calles más lejanas. Si no cabe ni un anillo, el mensaje acaba tras las
+  calles.
+- **Al leer:** el receptor lee como mucho `n` calles y solo las que llegan
+  enteras. Si han llegado las `n` y el mensaje sigue, el byte siguiente es
+  `m`: lee como mucho 4 anillos y solo los que llegan enteros. Un dispositivo
+  anterior a la v0.8 lee las `n` calles e ignora lo demás (sección 3).
 - Añadido en la v0.6 (2026-10-09), a petición del autor, para distinguir
   carreteras en el dibujo, como en la imagen de Beeline que pasó. El
   dispositivo dibuja un trozo corto de cada calle, desde el cruce hacia su
@@ -260,6 +271,39 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
   valhalla1.openstreetmap.de el 2026-10-09.
 - **Cuáles:** los cruces que quedan sobre el tramo de `TRAZO`, los más cercanos
   a la moto primero.
+- **Sin rayas dobles (app 0.12.0):** Valhalla da una calle por cada vía de
+  OpenStreetMap del nodo, también las aceras, los pasos de peatones, los
+  carriles bici y la otra calzada de las avenidas. La app:
+  - quita las calles de un cruce si tiene dos o más y por ninguna se puede
+    entrar (`entry` a `false` en todas); una sola de no entrar (una calle de
+    un sentido que llega a la ruta) se queda;
+  - de cada grupo de calles casi paralelas (a 30 m o menos a lo largo de la
+    ruta y a 30° o menos de rumbo) manda una: la primera por la que se puede
+    entrar o, si no hay, la primera. Antes de recortar por tamaño.
+  - Los umbrales son supuestos, sacados de 3 rutas reales (docs/DECISIONES.md).
+- **Anillos de las rotondas (v0.8):** en la respuesta solo viene el arco de la
+  rotonda que recorre la ruta (del primer cruce del paso de la rotonda,
+  `roundabout` o `rotary`, al primero del paso siguiente). La app le ajusta
+  un círculo y solo lo manda si se ajusta bien (5 puntos o más, 40° o más de
+  giro visto desde el centro, error cuadrático medio de 0,07 m o menos y un
+  radio de 5 a 80 m; supuestos a ajustar en la moto). Solo los manda si el
+  dispositivo anuncia el bit 9 de capacidades, y entonces, en los cruces de
+  esas rotondas:
+  - quita las calles que forman más de 90° con la radial hacia fuera (son el
+    propio anillo, que ya se dibuja entero);
+  - junta en una los brazos con isleta: dos calles seguidas de cruces
+    distintos, una de salida de la rotonda (`entry` a `true`) y la siguiente
+    de entrada (`entry` a `false`), a 90° o menos vistas desde el centro, que
+    se cortan por fuera a menos de 100 m o son casi paralelas (menos de 15°) y
+    a menos de 30 m. La calle que queda va en el anillo, a medio camino entre
+    los dos cruces, con el rumbo medio.
+  - Van los anillos que la ruta empieza a recorrer dentro del tramo y los que
+    ha dejado hace poco (hasta 20 m antes del principio de la ventana del
+    tramo, para que no desaparezcan dentro de la rotonda), en el orden de la
+    ruta, como mucho 4.
+- **Qué dibuja el dispositivo con el bit 9:** cada anillo, entero, como un
+  círculo de ese centro y ese radio. Un radio de 0 no debería llegar (la app
+  manda de 1 a 255).
 - **Ritmo:** la app lo manda justo después de cada `TRAZO` con tramo, con la
   secuencia de ese `TRAZO`. Tras un `TRAZO` sin tramo no se manda: los cruces
   caducan con su `TRAZO`.
@@ -360,6 +404,13 @@ la da el ángulo de `NAV` (sección 5). Ya no se intenta seguir los códigos
 
 ## 13. Cambios
 
+- **v0.8 (2026-10-09):** bloque opcional de anillos de rotondas al final de
+  `CRUCES` (sección 7 quater): 1 byte con cuántos (0 a 4) y, por anillo, el
+  centro (i16, i16) y el radio (u8), sin pasar de 179 bytes en total; bit 9 de
+  capacidades (0x0200, el dispositivo dibuja los anillos). La app solo manda
+  el bloque si el dispositivo anuncia el bit 9; los anteriores lo ignorarían
+  igualmente. Un cuadro 0.4.0 con todo anuncia 0x03EF. La versión del formato
+  sigue siendo 1.
 - **v0.7 (2026-10-09):** `GPS` implementado (sección 6), para el indicador de
   calidad del cuadro; el cuadro anuncia el bit 1 de capacidades. La versión
   del formato sigue siendo 1.
