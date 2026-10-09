@@ -1,9 +1,11 @@
 import MapKit
 import SwiftUI
+import LPRCore
 
-/// Mapa con la posición y un buscador (Apple Maps). Al elegir un destino se
-/// previsualizan las variantes de ruta; al iniciar, el guiado: cartel con la
-/// flecha y los metros, mapa que sigue la posición y lo que falta.
+/// Mapa con la posición y un buscador (Apple Maps). Con los botones de
+/// preferencias (peajes, autopistas, asfalto); al elegir un destino se
+/// previsualizan la ruta más rápida y la más divertida; al iniciar, el guiado:
+/// cartel con la flecha y los metros, mapa que sigue la posición y lo que falta.
 struct NavegacionView: View {
     @ObservedObject var navegacion: Navegacion
     @State private var mostrarAjustes = false
@@ -142,6 +144,8 @@ struct NavegacionView: View {
                     .foregroundStyle(.red)
             }
 
+            preferenciasRuta
+
             if navegacion.calculando {
                 HStack {
                     ProgressView()
@@ -156,32 +160,11 @@ struct NavegacionView: View {
                         .lineLimit(1)
                 }
                 ForEach(navegacion.variantes) { variante in
-                    Button {
-                        navegacion.elegida = variante.tipo
-                    } label: {
-                        HStack {
-                            Circle()
-                                .fill(color(variante.tipo))
-                                .frame(width: 12, height: 12)
-                            Text(LocalizedStringKey(variante.tipo.nombre))
-                            Spacer()
-                            Text(verbatim: Flechas.distancia(variante.metros))
-                                .monospacedDigit()
-                            Text(verbatim: Flechas.duracion(variante.segundos))
-                                .foregroundStyle(.secondary)
-                                .monospacedDigit()
-                            Image(systemName: variante.tipo == navegacion.elegida ? "checkmark.circle.fill" : "circle")
-                                .foregroundStyle(variante.tipo == navegacion.elegida ? Color.accentColor : .secondary)
-                        }
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
+                    filaVariante(variante)
                 }
-                if navegacion.variantes.contains(where: { $0.tipo == .secundarias }) {
-                    Text("«Por secundarias» evita autovías y prefiere carreteras secundarias; Valhalla no mide las curvas.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
+                Text(verbatim: notaVariantes)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
 
                 Toggle("Simular el recorrido", isOn: $navegacion.simular)
                 if navegacion.simular {
@@ -235,11 +218,90 @@ struct NavegacionView: View {
         }
     }
 
+    /// Botones de preferencias de ruta. Al tocarlos con un destino elegido se
+    /// vuelven a calcular las rutas.
+    private var preferenciasRuta: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                botonPreferencia("Evitar peajes", activa: $navegacion.evitarPeajes)
+                botonPreferencia("Evitar autopistas", activa: $navegacion.evitarAutopistas)
+                botonPreferencia("Solo asfalto", activa: $navegacion.soloAsfalto)
+            }
+        }
+    }
+
+    private func botonPreferencia(_ titulo: LocalizedStringKey, activa: Binding<Bool>) -> some View {
+        Button {
+            activa.wrappedValue.toggle()
+        } label: {
+            Label(titulo, systemImage: activa.wrappedValue ? "checkmark.circle.fill" : "circle")
+                .font(.footnote.weight(.semibold))
+                .lineLimit(1)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    activa.wrappedValue ? Color.accentColor.opacity(0.2) : Color.secondary.opacity(0.12),
+                    in: Capsule()
+                )
+                .foregroundStyle(activa.wrappedValue ? Color.accentColor : Color.primary)
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(activa.wrappedValue ? .isSelected : [])
+    }
+
+    private func filaVariante(_ variante: VarianteRuta) -> some View {
+        let esElegida = variante.tipo == navegacion.elegida
+        return Button {
+            navegacion.elegida = variante.tipo
+        } label: {
+            HStack {
+                Circle()
+                    .fill(color(variante.tipo))
+                    .frame(width: 12, height: 12)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(LocalizedStringKey(variante.tipo.nombre))
+                    Text(verbatim: detalle(variante))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text(verbatim: Flechas.distancia(variante.metros))
+                    .monospacedDigit()
+                Text(verbatim: Flechas.duracion(variante.segundos))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                Image(systemName: esElegida ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(esElegida ? Color.accentColor : .secondary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var notaVariantes: String {
+        let margen = Int((Curvas.margenTiempo * 100).rounded())
+        let regla = "La más divertida es la de más curvas sin tardar más de un \(margen) % que la más rápida."
+        if navegacion.rapidaEsLaDivertida {
+            return "La más rápida es también la de más curvas. " + regla
+        }
+        return regla + " Las curvas las cuenta la app sobre el trazado."
+    }
+
+    /// «32 curvas», y en la divertida lo que tarda de más sobre la rápida.
+    private func detalle(_ variante: VarianteRuta) -> String {
+        let curvas = variante.curvas == 1 ? "1 curva" : "\(variante.curvas) curvas"
+        guard variante.tipo == .divertida,
+              let rapida = navegacion.variantes.first(where: { $0.tipo == .rapida })
+        else { return curvas }
+        let demas = variante.segundos - rapida.segundos
+        guard demas >= 60 else { return curvas }
+        return curvas + " · +" + Flechas.duracion(demas)
+    }
+
     private func color(_ tipo: TipoVariante) -> Color {
         switch tipo {
         case .rapida: return .blue
-        case .secundarias: return .orange
-        case .corta: return .green
+        case .divertida: return .orange
         }
     }
 
