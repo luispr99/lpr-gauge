@@ -6,12 +6,14 @@ import FerrostarCore
 import FerrostarCoreFFI
 import LPRCore
 
-/// Las dos propuestas al elegir destino (docs/DECISIONES.md): la que menos
-/// tarda y la de más curvas sin pasarse de tiempo. Valhalla no mide las curvas:
-/// las cuenta la app sobre el trazado (LPRCore, Curvas.swift).
+/// Las propuestas al elegir destino (docs/DECISIONES.md): la que menos tarda,
+/// la de más curvas y, sin «Solo asfalto», la de más tierra; las dos últimas
+/// sin pasar del margen de tiempo de la barra. Valhalla no mide las curvas: las
+/// cuenta la app sobre el trazado (LPRCore, Curvas.swift).
 enum TipoVariante: String, CaseIterable, Identifiable {
     case rapida
     case divertida
+    case tierra
 
     var id: String { rawValue }
 
@@ -19,64 +21,86 @@ enum TipoVariante: String, CaseIterable, Identifiable {
         switch self {
         case .rapida: return "La más rápida"
         case .divertida: return "La más divertida"
+        case .tierra: return "Por tierra"
+        }
+    }
+
+    var icono: String {
+        switch self {
+        case .rapida: return "hare.fill"
+        case .divertida: return "road.lanes.curved.right"
+        case .tierra: return "mountain.2.fill"
         }
     }
 }
 
 /// Peticiones a Valhalla de las que salen las candidatas, cada una con hasta dos
-/// alternativas: la normal de la moto y otra que evita autovías y prefiere
-/// carreteras secundarias, de donde suelen salir las rutas con más curvas.
-private enum PeticionRutas: CaseIterable {
+/// alternativas.
+private enum TipoPeticion {
+    /// Las opciones normales de la moto, con las preferencias.
     case normal
+    /// Además evita autovías, de donde suelen salir las rutas con más curvas.
     case secundarias
+    /// Además prefiere pistas y tierra (solo sin «Solo asfalto»).
+    case tierra
 }
 
-/// Claves de las preferencias de ruta en UserDefaults.
+/// Claves de las preferencias de ruta en UserDefaults. «Solo asfalto» no se
+/// guarda: se marca cada vez que se abre la app.
 private enum ClavePreferencia {
     static let evitarPeajes = "rutas.evitarPeajes"
     static let evitarAutopistas = "rutas.evitarAutopistas"
-    static let soloAsfalto = "rutas.soloAsfalto"
+    static let margenExtra = "rutas.margenExtra"
 
     static func valor(_ clave: String, porDefecto: Bool) -> Bool {
         UserDefaults.standard.object(forKey: clave) as? Bool ?? porDefecto
     }
 }
 
-/// Una ruta propuesta, para previsualizarla en el mapa antes de empezar.
-struct VarianteRuta: Identifiable {
-    let tipo: TipoVariante
-    let ruta: Route
-    let geometria: [CLLocationCoordinate2D]
+/// Una ruta candidata: lo que devolvió Valhalla, la petición de la que salió y
+/// su posición en la respuesta (0, la principal; después, las alternativas),
+/// para pedirla otra vez a Ferrostar al empezar.
+struct RutaCandidata {
+    let ruta: RutaValhalla
+    let peticion: PeticionRutas
+    let indice: Int
     let sinuosidad: Sinuosidad
-    /// Opciones de la moto con las que salió; al recalcular por desvío se usan
-    /// las mismas.
-    let opcionesMoto: [String: Any]
+    let geometria: [CLLocationCoordinate2D]
+    let trazo: TrazoMapa
 
-    var id: TipoVariante { tipo }
-    var metros: Double { ruta.distance }
-    var segundos: Double { VarianteRuta.segundos(ruta) }
-    var curvas: Int { sinuosidad.curvas }
-
-    static func segundos(_ ruta: Route) -> Double {
-        ruta.steps.reduce(0) { $0 + $1.duration }
-    }
-
-    /// Curvas de la ruta. Cada paso se mide por separado, para no contar los giros
-    /// de los cruces, y se saltan las rotondas (pasos cortos con número de
-    /// salida), que si no contarían como curva.
-    static func sinuosidad(_ ruta: Route) -> Sinuosidad {
-        let tramos = ruta.steps
-            .filter { paso in !(paso.roundaboutExitNumber != nil && paso.distance < 300) }
-            .map { paso in paso.geometry.map { PuntoRuta(latitud: $0.lat, longitud: $0.lng) } }
-        return Curvas.medir(tramos: tramos)
+    init(ruta: RutaValhalla, peticion: PeticionRutas, indice: Int) {
+        self.ruta = ruta
+        self.peticion = peticion
+        self.indice = indice
+        sinuosidad = Curvas.medir(tramos: ruta.tramosParaCurvas)
+        geometria = ruta.puntos.map { CLLocationCoordinate2D(latitude: $0.latitud, longitude: $0.longitud) }
+        trazo = TrazoMapa(geometria)
     }
 }
 
+/// Una ruta propuesta en el mapa. Puede tener varios papeles: la más rápida
+/// puede ser también la más divertida.
+struct VarianteRuta: Identifiable {
+    let tipos: [TipoVariante]
+    let candidata: RutaCandidata
+
+    /// El papel principal, que da el color y el icono.
+    var tipo: TipoVariante { tipos[0] }
+    var id: TipoVariante { tipo }
+    var nombre: String { tipos.map(\.nombre).joined(separator: " · ") }
+    var metros: Double { candidata.ruta.metros }
+    var segundos: Double { candidata.ruta.segundos }
+    var curvas: Int { candidata.sinuosidad.curvas }
+    var metrosPeaje: Double { candidata.ruta.metrosPeaje }
+    var metrosSinAsfaltar: Double { candidata.ruta.metrosSinAsfaltar }
+    var geometria: [CLLocationCoordinate2D] { candidata.geometria }
+    var trazo: TrazoMapa { candidata.trazo }
+}
+
 /// Navegación giro a giro con Ferrostar y Valhalla (docs/DECISIONES.md).
-/// Busca el destino con Apple Maps, propone la ruta más rápida y la más
-/// divertida en moto (con las preferencias de peajes, autopistas y asfalto, en
-/// español) y, al iniciar, publica la maniobra, los metros que faltan y la
-/// altitud del GPS.
+/// Busca el destino con Apple Maps, propone rutas en moto según las
+/// preferencias (peajes, autopistas, asfalto y margen de tiempo) y, al iniciar,
+/// publica la maniobra, los metros que faltan y la altitud del GPS.
 ///
 /// De momento solo en primer plano y solo en la pantalla del iPhone: el envío al
 /// cuadro (NAV y GPS) y el segundo plano llegan en los pasos siguientes.
@@ -88,16 +112,32 @@ final class Navegacion: ObservableObject {
     @Published private(set) var aviso: String?
 
     // MARK: Preferencias de ruta
-    /// Se guardan entre usos. Valhalla las trata como preferencias, no como
-    /// prohibiciones: si no hay otro camino, la ruta puede llevar algún tramo.
+    /// Valhalla las trata como preferencias, no como prohibiciones: si no hay
+    /// otro camino, la ruta puede llevar algún tramo (se avisa en cada ruta).
     @Published var evitarPeajes = ClavePreferencia.valor(ClavePreferencia.evitarPeajes, porDefecto: true) {
-        didSet { preferenciaCambiada(ClavePreferencia.evitarPeajes, evitarPeajes) }
+        didSet {
+            UserDefaults.standard.set(evitarPeajes, forKey: ClavePreferencia.evitarPeajes)
+            preferenciaCambiada()
+        }
     }
     @Published var evitarAutopistas = ClavePreferencia.valor(ClavePreferencia.evitarAutopistas, porDefecto: false) {
-        didSet { preferenciaCambiada(ClavePreferencia.evitarAutopistas, evitarAutopistas) }
+        didSet {
+            UserDefaults.standard.set(evitarAutopistas, forKey: ClavePreferencia.evitarAutopistas)
+            preferenciaCambiada()
+        }
     }
-    @Published var soloAsfalto = ClavePreferencia.valor(ClavePreferencia.soloAsfalto, porDefecto: false) {
-        didSet { preferenciaCambiada(ClavePreferencia.soloAsfalto, soloAsfalto) }
+    /// Marcado al abrir la app; se puede desmarcar para un viaje.
+    @Published var soloAsfalto = true {
+        didSet { preferenciaCambiada() }
+    }
+    /// Tiempo extra admitido para la más divertida y la de tierra sobre la más
+    /// rápida (0,25 = un 25 % más), de 0 a 2. Cambiarlo no pide rutas nuevas:
+    /// vuelve a elegir entre las candidatas.
+    @Published var margenExtra = ClavePreferencia.margenGuardado() {
+        didSet {
+            UserDefaults.standard.set(margenExtra, forKey: ClavePreferencia.margenExtra)
+            elegirVariantes()
+        }
     }
 
     // MARK: Rutas propuestas
@@ -105,9 +145,14 @@ final class Navegacion: ObservableObject {
     @Published private(set) var variantes: [VarianteRuta] = []
     @Published var elegida: TipoVariante = .rapida
     @Published private(set) var calculando = false
-    /// La más rápida es también la de más curvas dentro del margen de tiempo: se
-    /// muestra una sola.
-    @Published private(set) var rapidaEsLaDivertida = false
+    /// Sube cada vez que termina un cálculo de rutas (para encuadrar el mapa).
+    @Published private(set) var calculos = 0
+    /// Todas las candidatas llevan tierra en medio.
+    @Published private(set) var sinRutaDeAsfalto = false
+    /// Sin «Solo asfalto», ninguna candidata dentro del margen lleva tierra.
+    @Published private(set) var sinRutaPorTierra = false
+    /// Pidiendo la ruta elegida a Ferrostar para empezar.
+    @Published private(set) var preparando = false
 
     // MARK: Guiado
     @Published private(set) var navegando = false
@@ -144,10 +189,15 @@ final class Navegacion: ObservableObject {
     private var nucleo: FerrostarCore?
     private var simulador: SimulatedLocationProvider?
     private var suscripcion: AnyCancellable?
+    /// Geometría de la ruta del guiado, para saber cuándo cambia.
+    private var geometriaGuiado: [GeographicCoordinate] = []
 
-    /// Cálculo de rutas en curso. Cada cálculo nuevo cancela el anterior; la
-    /// generación evita que uno viejo pise los datos del nuevo.
+    /// Las candidatas del último cálculo, para volver a elegir sin pedir nada.
+    private var candidatas: [RutaCandidata] = []
+    /// Cálculo de rutas o inicio en curso. Cada cálculo nuevo cancela el
+    /// anterior; la generación evita que uno viejo pise los datos del nuevo.
     private var tareaVariantes: Task<Void, Never>?
+    private var tareaInicio: Task<Void, Never>?
     private var generacion = 0
     /// Momento de la última petición de rutas, para no pasar de una por segundo.
     private var ultimaPeticion: ContinuousClock.Instant?
@@ -198,11 +248,16 @@ final class Navegacion: ObservableObject {
     func cancelarRuta() {
         tareaVariantes?.cancel()
         tareaVariantes = nil
+        tareaInicio?.cancel()
+        tareaInicio = nil
         generacion += 1
         calculando = false
+        preparando = false
         destino = nil
+        candidatas = []
         variantes = []
-        rapidaEsLaDivertida = false
+        sinRutaDeAsfalto = false
+        sinRutaPorTierra = false
         consulta = ""
         sugerencias = []
         aviso = nil
@@ -210,19 +265,17 @@ final class Navegacion: ObservableObject {
 
     // MARK: - Rutas propuestas
 
-    private func preferenciaCambiada(_ clave: String, _ valor: Bool) {
-        UserDefaults.standard.set(valor, forKey: clave)
-        // Con un destino elegido, se vuelven a pedir las rutas con las nuevas
-        // preferencias
+    private func preferenciaCambiada() {
+        // Con un destino elegido, se vuelven a pedir las rutas
         if let destino, !navegando {
             pedirVariantes(hacia: destino)
         }
     }
 
-    /// Opciones de la moto para Valhalla según las preferencias y la petición
-    /// [F33]. Todas son preferencias: las exclusiones estrictas de peajes y
-    /// autopistas dependen de la configuración del servidor.
-    private func opcionesMoto(_ peticion: PeticionRutas) -> [String: Any] {
+    /// Opciones de la moto para Valhalla [F33]. Todas son preferencias: en moto
+    /// Valhalla no permite excluir la tierra (ignora `exclude_unpaved`), y las
+    /// exclusiones estrictas de peajes y autopistas dependen del servidor.
+    private func opcionesMoto(_ peticion: TipoPeticion) -> [String: Any] {
         var opciones: [String: Any] = [:]
         if evitarPeajes {
             opciones["use_tolls"] = 0
@@ -231,23 +284,27 @@ final class Navegacion: ObservableObject {
             opciones["use_highways"] = 0
         }
         if soloAsfalto {
-            // Sin tierra en mitad de la ruta, y evitando pistas y firmes malos
-            opciones["exclude_unpaved"] = true
+            // La máxima penalización a firmes sin asfaltar y a pistas
             opciones["use_trails"] = 0
+            opciones["use_tracks"] = 0
         }
-        if peticion == .secundarias {
+        switch peticion {
+        case .normal:
+            break
+        case .secundarias:
             opciones["use_highways"] = 0
-            // Hacia 1 evita las carreteras principales y va por secundarias; con
-            // «solo asfalto» se queda en 0, porque también abre pistas
-            if !soloAsfalto {
-                opciones["use_trails"] = 0.5
-            }
+        case .tierra:
+            opciones["use_highways"] = 0
+            opciones["use_trails"] = 1
+            opciones["use_tracks"] = 1
         }
         return opciones
     }
 
     private func pedirVariantes(hacia lugar: ResultadoBusqueda) {
         tareaVariantes?.cancel()
+        tareaInicio?.cancel()
+        preparando = false
         generacion += 1
         let esta = generacion
         tareaVariantes = Task { [weak self] in
@@ -256,12 +313,20 @@ final class Navegacion: ObservableObject {
     }
 
     /// El servidor de FOSSGIS admite como mucho una petición por segundo [F20].
+    /// Si la tarea se cancela mientras espera, no cuenta como petición.
     private func esperarTurno() async {
-        guard let ultimaPeticion else { return }
-        let espera = ContinuousClock.now.duration(to: ultimaPeticion.advanced(by: .milliseconds(1100)))
-        if espera > .zero {
-            try? await Task.sleep(for: espera)
+        if let ultimaPeticion {
+            let espera = ContinuousClock.now.duration(to: ultimaPeticion.advanced(by: .milliseconds(1100)))
+            if espera > .zero {
+                do {
+                    try await Task.sleep(for: espera)
+                } catch {
+                    return
+                }
+            }
         }
+        guard !Task.isCancelled else { return }
+        ultimaPeticion = .now
     }
 
     private func calcularVariantes(hacia lugar: ResultadoBusqueda, generacion esta: Int) async {
@@ -276,65 +341,143 @@ final class Navegacion: ObservableObject {
             }
         }
         aviso = nil
+        candidatas = []
         variantes = []
-        rapidaEsLaDivertida = false
+        sinRutaDeAsfalto = false
+        sinRutaPorTierra = false
         let punto = Waypoint(
             coordinate: GeographicCoordinate(lat: lugar.latitud, lng: lugar.longitud),
             kind: .break
         )
 
-        var rutas: [(ruta: Route, opcionesMoto: [String: Any])] = []
-        for peticion in PeticionRutas.allCases {
+        // Con «Evitar autopistas», la normal ya es la de secundarias: no se repite
+        var tipos: [TipoPeticion] = [.normal]
+        if !evitarAutopistas {
+            tipos.append(.secundarias)
+        }
+        if !soloAsfalto {
+            tipos.append(.tierra)
+        }
+        var nuevas: [RutaCandidata] = []
+        for tipo in tipos {
             await esperarTurno()
             // Si mientras tanto se ha pedido otro cálculo o se ha cancelado, se para
             guard generacion == esta else { return }
-            let opciones = opcionesMoto(peticion)
+            let peticion = PeticionRutas(opcionesMoto: opcionesMoto(tipo), alternativas: 2, origen: origen, destino: punto)
             do {
-                let nucleo = try crearNucleo(opcionesMoto: opciones, alternativas: 2, ubicacion: ubicacion)
-                ultimaPeticion = .now
-                let nuevas = try await nucleo.getRoutes(initialLocation: origen, waypoints: [punto])
+                let rutas = try await ClienteValhalla.rutasPropuestas(peticion)
                 guard generacion == esta else { return }
-                rutas += nuevas.map { (ruta: $0, opcionesMoto: opciones) }
+                for (indice, ruta) in rutas.enumerated() {
+                    // Las que salen iguales en varias peticiones, una sola vez
+                    let repetida = nuevas.contains {
+                        abs($0.ruta.metros - ruta.metros) < 1
+                            && abs($0.ruta.segundos - ruta.segundos) < 1
+                            && $0.ruta.puntos.count == ruta.puntos.count
+                    }
+                    if !repetida {
+                        nuevas.append(RutaCandidata(ruta: ruta, peticion: peticion, indice: indice))
+                    }
+                }
             } catch {
                 guard generacion == esta else { return }
                 aviso = "No se pudieron calcular todas las rutas: \(error.localizedDescription)"
             }
         }
 
-        let candidatas = rutas.map {
-            Candidata(segundos: VarianteRuta.segundos($0.ruta), sinuosidad: VarianteRuta.sinuosidad($0.ruta))
+        candidatas = nuevas
+        elegirVariantes()
+        if variantes.isEmpty && aviso == nil {
+            aviso = "No se encontró ninguna ruta."
         }
-        guard let eleccion = Curvas.elegir(candidatas) else {
-            if aviso == nil {
-                aviso = "No se encontró ninguna ruta."
-            }
-            return
-        }
-        func variante(_ tipo: TipoVariante, _ indice: Int) -> VarianteRuta {
-            let ruta = rutas[indice].ruta
-            return VarianteRuta(
-                tipo: tipo,
-                ruta: ruta,
-                geometria: ruta.geometry.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lng) },
-                sinuosidad: candidatas[indice].sinuosidad,
-                opcionesMoto: rutas[indice].opcionesMoto
+        calculos += 1
+    }
+
+    /// Elige las propuestas entre las candidatas con el margen actual (LPRCore,
+    /// Eleccion.swift).
+    private func elegirVariantes() {
+        let entradas = candidatas.map {
+            Candidata(
+                segundos: $0.ruta.segundos,
+                sinuosidad: $0.sinuosidad,
+                metrosSinAsfaltar: $0.ruta.metrosSinAsfaltarEnMedio,
+                tierraEnMedio: $0.ruta.tierraEnMedio
             )
         }
-        var nuevas = [variante(.rapida, eleccion.rapida)]
-        if eleccion.divertida != eleccion.rapida {
-            nuevas.append(variante(.divertida, eleccion.divertida))
+        guard let eleccion = Eleccion.elegir(entradas, margen: margenExtra, buscarTierra: !soloAsfalto) else {
+            variantes = []
+            sinRutaDeAsfalto = false
+            sinRutaPorTierra = false
+            return
         }
-        rapidaEsLaDivertida = eleccion.divertida == eleccion.rapida
-        elegida = .rapida
-        variantes = nuevas
+        // Una ruta con varios papeles sale una sola vez
+        var papeles: [(indice: Int, tipos: [TipoVariante])] = []
+        func anadir(_ indice: Int, _ tipo: TipoVariante) {
+            if let posicion = papeles.firstIndex(where: { $0.indice == indice }) {
+                papeles[posicion].tipos.append(tipo)
+            } else {
+                papeles.append((indice: indice, tipos: [tipo]))
+            }
+        }
+        anadir(eleccion.rapida, .rapida)
+        anadir(eleccion.divertida, .divertida)
+        if let tierra = eleccion.porTierra {
+            anadir(tierra, .tierra)
+        }
+        variantes = papeles.map { VarianteRuta(tipos: $0.tipos, candidata: candidatas[$0.indice]) }
+        // Se mantiene la elegida si sigue entre las propuestas
+        if !variantes.contains(where: { $0.tipos.contains(elegida) }) {
+            elegida = .rapida
+        }
+        sinRutaDeAsfalto = eleccion.todasConTierra
+        sinRutaPorTierra = !soloAsfalto && eleccion.porTierra == nil
     }
 
     // MARK: - Navegación
 
     func iniciar() {
-        guard let variante = variantes.first(where: { $0.tipo == elegida }) ?? variantes.first else { return }
+        guard !preparando,
+              let variante = variantes.first(where: { $0.tipos.contains(elegida) }) ?? variantes.first
+        else { return }
         aviso = nil
+        preparando = true
+        let esta = generacion
+        tareaInicio = Task { [weak self] in
+            await self?.iniciar(variante, generacion: esta)
+        }
+    }
+
+    /// Pide a Valhalla la ruta elegida en formato OSRM (la misma petición que la
+    /// propuesta) y empieza a guiar con Ferrostar. Si ya no se está cerca de la
+    /// ruta o el servidor devuelve otras rutas, no empieza: vuelve a calcular
+    /// las propuestas y avisa.
+    private func iniciar(_ variante: VarianteRuta, generacion esta: Int) async {
+        defer {
+            if generacion == esta {
+                preparando = false
+            }
+        }
+        let candidata = variante.candidata
+        // Las rutas se piden desde la posición del momento de proponerlas. Si
+        // desde entonces se ha alejado de la ruta, Ferrostar la daría por
+        // desviada nada más empezar y recalcularía otra
+        if !simular, let destino, let lejos = distanciaALaRuta(candidata), lejos > Self.metrosMaximosDesdeLaRuta {
+            aviso = "Te has alejado de la ruta desde que se calculó: se han vuelto a calcular las rutas."
+            pedirVariantes(hacia: destino)
+            return
+        }
         do {
+            await esperarTurno()
+            guard generacion == esta else { return }
+            let rutas = try await ClienteValhalla.rutasFerrostar(candidata.peticion)
+            guard generacion == esta, !navegando else { return }
+            guard let ruta = Self.emparejar(candidata, en: rutas) else {
+                aviso = "Las rutas han cambiado en el servidor desde que se calcularon: se han vuelto a calcular. Elige otra vez y pulsa «Iniciar»."
+                if let destino {
+                    pedirVariantes(hacia: destino)
+                }
+                return
+            }
+
             // Con simulación, Ferrostar recibe las posiciones del simulador en vez
             // de las del GPS; la altitud sigue saliendo del GPS real
             let simulador = simular ? SimulatedLocationProvider() : nil
@@ -344,12 +487,15 @@ final class Navegacion: ObservableObject {
             } else {
                 fuente = ubicacion
             }
-            let nucleo = try crearNucleo(opcionesMoto: variante.opcionesMoto, alternativas: 0, ubicacion: fuente)
+            let nucleo = try crearNucleo(
+                proveedor: candidata.peticion.proveedor(alternativas: 0),
+                ubicacion: fuente
+            )
             if let simulador {
-                try simulador.setSimulatedRoute(variante.ruta, resampleDistance: 10)
+                try simulador.setSimulatedRoute(ruta, resampleDistance: 10)
                 simulador.warpFactor = max(1, factorSimulacion)
             }
-            try nucleo.startNavigation(route: variante.ruta)
+            try nucleo.startNavigation(route: ruta)
             self.nucleo = nucleo
             self.simulador = simulador
             simulando = simulador != nil
@@ -363,8 +509,42 @@ final class Navegacion: ObservableObject {
                     }
                 }
         } catch {
+            guard generacion == esta else { return }
             aviso = "No se pudo empezar la navegación: \(error.localizedDescription)"
         }
+    }
+
+    /// La ruta de Ferrostar que corresponde a la propuesta: la de la misma
+    /// posición si coincide en distancia y tiempo; si no, otra que coincida. Nil
+    /// si ninguna coincide (por ejemplo, porque el servidor ha cargado datos
+    /// nuevos o ha devuelto menos alternativas).
+    static func emparejar(_ candidata: RutaCandidata, en rutas: [Route]) -> Route? {
+        let metros = candidata.ruta.metros
+        let segundos = candidata.ruta.segundos
+        func coincide(_ ruta: Route) -> Bool {
+            let duracion = ruta.steps.reduce(0) { $0 + $1.duration }
+            return abs(ruta.distance - metros) <= max(5, metros * 0.002)
+                && abs(duracion - segundos) <= max(5, segundos * 0.002)
+        }
+        if rutas.indices.contains(candidata.indice), coincide(rutas[candidata.indice]) {
+            return rutas[candidata.indice]
+        }
+        return rutas.first(where: coincide)
+    }
+
+    /// A partir de esta distancia a la ruta (con buena precisión del GPS), se
+    /// considera que el usuario se ha ido de ella. Ferrostar marca desvío a
+    /// partir de 50 m; se deja margen.
+    private static let metrosMaximosDesdeLaRuta = 100.0
+
+    /// Distancia de la posición actual al trazado de la ruta; nil si no hay
+    /// posición o su precisión es peor de 25 m.
+    private func distanciaALaRuta(_ candidata: RutaCandidata) -> Double? {
+        guard let actual = ubicacion.lastLocation,
+              actual.horizontalAccuracy > 0, actual.horizontalAccuracy <= 25
+        else { return nil }
+        let punto = PuntoRuta(latitud: actual.coordinates.lat, longitud: actual.coordinates.lng)
+        return Simplificar.distancia(de: punto, a: candidata.ruta.puntos)
     }
 
     func terminar() {
@@ -384,6 +564,7 @@ final class Navegacion: ObservableObject {
         segundosRestantes = nil
         fueraDeRuta = false
         recalculando = false
+        geometriaGuiado = []
         geometriaRuta = []
         posicionEnRuta = nil
         rumbo = nil
@@ -394,13 +575,9 @@ final class Navegacion: ObservableObject {
         ubicacion.startUpdating()
     }
 
-    /// `alternativas`: cuántas rutas alternativas pedir a Valhalla además de la
-    /// principal (0 para guiar, porque al recalcular solo se usa la primera).
-    private func crearNucleo(
-        opcionesMoto: [String: Any],
-        alternativas: Int,
-        ubicacion fuente: LocationProviding
-    ) throws -> FerrostarCore {
+    /// Núcleo de Ferrostar para guiar. Al recalcular por desvío usa el mismo
+    /// proveedor, con las opciones de la ruta elegida.
+    private func crearNucleo(proveedor: WellKnownRouteProvider, ubicacion fuente: LocationProviding) throws -> FerrostarCore {
         // Valores de la app de demostración de Ferrostar 0.57.0 (DemoModel.swift)
         let configuracion = SwiftNavigationControllerConfig(
             waypointAdvance: .waypointWithinRange(100.0),
@@ -416,19 +593,6 @@ final class Navegacion: ObservableObject {
             routeDeviationTracking: .staticThreshold(minimumHorizontalAccuracy: 15, maxAcceptableDeviation: 50),
             snappedLocationCourseFiltering: .snapToRoute
         )
-        // Moto, con las instrucciones en español y las opciones de la ruta. Al
-        // recalcular por desvío se usan las mismas opciones
-        var opciones: [String: Any] = [
-            "language": "es-ES",
-            "units": "kilometers",
-            "costing_options": ["motorcycle": opcionesMoto],
-        ]
-        if alternativas > 0 {
-            opciones["alternates"] = alternativas
-        }
-        let proveedor = try WellKnownRouteProvider
-            .valhalla(endpointUrl: Servidores.rutas, profile: "motorcycle")
-            .withJsonOptions(options: opciones)
         return try FerrostarCore(
             wellKnownRouteProvider: proveedor,
             locationProvider: fuente,
@@ -463,10 +627,8 @@ final class Navegacion: ObservableObject {
 
         // Datos del mapa. La geometría solo cambia al recalcular la ruta
         let ruta = estado.routeGeometry
-        let rutaCambiada = ruta.count != geometriaRuta.count
-            || ruta.last?.lat != geometriaRuta.last?.latitude
-            || ruta.last?.lng != geometriaRuta.last?.longitude
-        if rutaCambiada {
+        if ruta != geometriaGuiado {
+            geometriaGuiado = ruta
             geometriaRuta = ruta.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lng) }
         }
         if let yo = estado.preferredUserLocation {
@@ -498,5 +660,13 @@ final class Navegacion: ObservableObject {
             altitud = nil
             precisionVertical = nil
         }
+    }
+}
+
+private extension ClavePreferencia {
+    /// Margen guardado, entre 0 y 2; si no hay, el 25 % (Eleccion.margenPorDefecto).
+    static func margenGuardado() -> Double {
+        let guardado = UserDefaults.standard.object(forKey: margenExtra) as? Double
+        return min(2, max(0, guardado ?? Eleccion.margenPorDefecto))
     }
 }

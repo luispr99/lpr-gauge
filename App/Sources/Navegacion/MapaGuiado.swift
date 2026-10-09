@@ -30,7 +30,10 @@ struct EncuadreMapa: Equatable {
 }
 
 /// Mapa de Apple (MapKit) con la ruta de Valhalla, la posición y el punto del
-/// próximo giro. Sin gestos: la cámara sigue a la posición.
+/// próximo giro. Sin gestos: la cámara sigue a la posición. La raya va con
+/// uniones redondeadas, para que en las curvas cerradas no salgan picos fuera de
+/// la carretera. No se simplifica: la cámara está siempre cerca (250–1500 m),
+/// donde la raya tiene que seguir la carretera.
 struct MapaGuiado: View {
     let ruta: [CLLocationCoordinate2D]
     let posicion: CLLocationCoordinate2D?
@@ -43,7 +46,7 @@ struct MapaGuiado: View {
         Map(position: $camara, interactionModes: []) {
             if ruta.count > 1 {
                 MapPolyline(coordinates: ruta)
-                    .stroke(.blue, lineWidth: 8)
+                    .stroke(.blue, style: StrokeStyle(lineWidth: 8, lineCap: .round, lineJoin: .round))
             }
             if let giro {
                 Annotation("", coordinate: giro, anchor: .center) {
