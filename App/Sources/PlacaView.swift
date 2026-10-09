@@ -1,7 +1,7 @@
 import SwiftUI
 import LPRCore
 
-// Prueba del enlace BLE con la placa (PROTOCOLO.md v0.4): estado de la
+// Prueba del enlace BLE con la placa (PROTOCOLO.md v0.5): estado de la
 // conexión, batería del iPhone que se envía en MOVIL, un texto de prueba para
 // la cara de navegación (NAV_TEXT), si se manda el tramo de ruta (TRAZO) y los
 // ecos de STATUS. (El registro para

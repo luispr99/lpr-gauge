@@ -1,5 +1,5 @@
 // Constantes del protocolo BLE móvil → cuadro. La fuente de verdad es
-// docs/PROTOCOLO.md (borrador v0.4): si cambia el documento, cambia esto.
+// docs/PROTOCOLO.md (borrador v0.5): si cambia el documento, cambia esto.
 
 public enum Protocolo {
     /// Versión del formato de los mensajes (sección 3).

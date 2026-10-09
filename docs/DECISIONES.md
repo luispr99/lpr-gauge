@@ -349,8 +349,29 @@ final.
 - **Riesgos sin comprobar:** que Sideloadly conserve los modos al volver a
   firmar; los huecos sin posiciones en iOS 27 [F12]; si el usuario cierra la
   app deslizándola, iOS no la vuelve a lanzar [F13].
-- **Cuadro:** se describe en su `docs/CAMBIOS_CLAUDE.md`, sección 75 (el código
-  no entra en este repositorio). Recibe `TRAZO` y lo dibuja con una línea de
+- **0.9.1, revisión de la 0.9.0 antes de probarla** (un agente para la app y
+  otro para el cuadro, solo lectura). Cambios en la app:
+  - **El tramo se paraba en el giro.** Se contaba la distancia entera del paso
+    actual, no lo que queda, así que no se veía la carretera de salida. Ahora
+    cuenta lo que queda: `Trazo.pasosNecesarios`, con pruebas.
+  - **Cerca del giro el dibujo rotaba hacia la salida**, porque la cuerda de
+    25 m cruzaba la maniobra. Ahora el rumbo sale solo del paso actual; a
+    menos de 3 m del giro, del último segmento. Con prueba.
+  - **Ritmo de envío.** Antes había ráfagas y un tramo nuevo solo cada 2 s.
+    Ahora la app mira cada 0,5 s qué toca, repite cada característica por su
+    cuenta a los 1,5 s y un tramo nuevo sale en cuanto pasa 1 s del anterior.
+  - **Al llegar** se quita el segundo plano. Ferrostar no para el GPS, que
+    seguía con el iPhone bloqueado.
+- **MOVIL solo al cambiar (protocolo v0.5).** El autor no quiere que la
+  batería se mande constantemente, solo cuando cambia el % o la carga.
+  - Un cuadro que anuncia el bit 7 da MOVIL por bueno toda la conexión.
+  - La app lo manda al conectar, al cambiar o si se pide reenvío, y lo repite
+    si en 2 s no llega el eco: el eco de STATUS sirve de confirmación.
+  - Sin el bit (el firmware de referencia) sigue cada 2 s.
+- **Cobertura del móvil en el cuadro:** pedida el 2026-10-09. El autor: si no
+  se puede obtener, no se incluye. Pendiente de la investigación.
+- **Cuadro:** se describe en su `docs/CAMBIOS_CLAUDE.md`, secciones 75 y
+  75 bis (el código no entra en este repositorio). Recibe `TRAZO` y lo dibuja con una línea de
   LVGL y un marcador de la moto; la distancia y la instrucción van debajo. El
   rayo verde va ahora encima del icono del móvil, que con la carga toma el
   color del tema.

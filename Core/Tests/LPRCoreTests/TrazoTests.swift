@@ -83,6 +83,35 @@ final class TrazoTests: XCTestCase {
         XCTAssertNil(tramo.giro)
     }
 
+    func testTramoCercaDelGiroNoRota() {
+        // A 10 m de un giro de 90° a la derecha: el giro sigue recto delante y
+        // la salida, a la derecha (antes, la cuerda de 25 m cruzaba el giro y
+        // el dibujo rotaba hacia la salida; revisión de la 0.9.0)
+        let norte = (0...3).map { punto(0, Double($0) * 100) }
+        let este = (0...4).map { punto(Double($0) * 100, 300) }
+        let tramo = try! XCTUnwrap(Trazo.tramo(pasos: [norte, este], indice: 2, desde: punto(0, 290),
+                                               metros: 300, giro: punto(0, 300)))
+        XCTAssertEqual(tramo.giro, 1)
+        XCTAssertEqual(tramo.puntos[1].x, 0, accuracy: 0.5)
+        XCTAssertEqual(tramo.puntos[1].y, 10, accuracy: 0.5)
+        XCTAssertGreaterThan(tramo.puntos.last!.x, 250)
+        XCTAssertEqual(tramo.puntos.last!.y, 10, accuracy: 0.5)
+        // A 1 m: el rumbo del último segmento del paso
+        let pegado = try! XCTUnwrap(Trazo.tramo(pasos: [norte, este], indice: 2, desde: punto(0, 299),
+                                                metros: 300, giro: punto(0, 300)))
+        XCTAssertEqual(pegado.puntos.last!.y, 1, accuracy: 0.5)
+        XCTAssertGreaterThan(pegado.puntos.last!.x, 250)
+    }
+
+    func testPasosNecesariosCuentaLoQueQuedaDelActual() {
+        // Paso actual de 2000 m con 300 por delante: hace falta el siguiente
+        // para ver la salida del giro (revisión de la 0.9.0)
+        XCTAssertEqual(Trazo.pasosNecesarios(distancias: [2000, 500, 800], restanteEnActual: 300, metros: 450), 2)
+        XCTAssertEqual(Trazo.pasosNecesarios(distancias: [2000, 500, 800], restanteEnActual: 1500, metros: 1000), 1)
+        XCTAssertEqual(Trazo.pasosNecesarios(distancias: [100, 50, 60], restanteEnActual: 80, metros: 1000), 3)
+        XCTAssertEqual(Trazo.pasosNecesarios(distancias: [], restanteEnActual: 0, metros: 500), 0)
+    }
+
     func testSinRutaPorDelante() {
         XCTAssertNil(Trazo.tramo(pasos: [], indice: nil, desde: punto(0, 0), metros: 500, giro: nil))
     }

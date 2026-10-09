@@ -1,4 +1,4 @@
-// Codificación y decodificación de los mensajes (docs/PROTOCOLO.md, v0.4).
+// Codificación y decodificación de los mensajes (docs/PROTOCOLO.md, v0.5).
 // Reglas comunes (sección 3): little-endian, primer byte = versión, campos
 // nuevos al final; el receptor ignora los bytes que sobran y descarta los
 // mensajes cortos o con una versión que no conoce.
@@ -231,6 +231,9 @@ public struct Capacidades: OptionSet, Equatable {
     public static let config  = Capacidades(rawValue: 1 << 4)
     public static let movil   = Capacidades(rawValue: 1 << 5)
     public static let trazo   = Capacidades(rawValue: 1 << 6)
+    /// El dispositivo da MOVIL por bueno mientras dure la conexión: la app lo
+    /// manda solo al cambiar (v0.5, §7).
+    public static let movilAlCambiar = Capacidades(rawValue: 1 << 7)
 }
 
 public struct DeviceInfo: Equatable {

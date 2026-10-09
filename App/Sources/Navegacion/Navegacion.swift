@@ -101,10 +101,9 @@ struct VarianteRuta: Identifiable {
 /// Navegación giro a giro con Ferrostar y Valhalla (docs/DECISIONES.md).
 /// Busca el destino con Apple Maps, propone rutas en moto según las
 /// preferencias (peajes, autopistas, asfalto y margen de tiempo) y, al iniciar,
-/// publica la maniobra, los metros que faltan y la altitud del GPS.
-///
-/// De momento solo en primer plano y solo en la pantalla del iPhone: el envío al
-/// cuadro (NAV y GPS) y el segundo plano llegan en los pasos siguientes.
+/// publica la maniobra, los metros que faltan y la altitud del GPS. Al cuadro
+/// le pasa el texto (NAV_TEXT) y el tramo de ruta (TRAZO) por el enlace, y el
+/// guiado sigue en segundo plano y con la pantalla bloqueada (desde la 0.9.0).
 @MainActor
 final class Navegacion: ObservableObject {
     // MARK: Búsqueda
@@ -697,8 +696,12 @@ final class Navegacion: ObservableObject {
         } else {
             fueraDeRuta = false
         }
-        if case .complete = estado.tripState {
+        if case .complete = estado.tripState, !llegada {
             llegada = true
+            // Ferrostar no para el GPS al llegar: sin esto seguiría en segundo
+            // plano, con el iPhone bloqueado, hasta pulsar «Terminar» (lo vio la
+            // revisión de la 0.9.0). Quitarlo se puede también en segundo plano
+            ubicacion.guiadoEnFondo(false)
         }
 
         let texto: String?
@@ -748,14 +751,11 @@ final class Navegacion: ObservableObject {
               desvio == .noDeviation
         else { return nil }
         let metros = Self.metrosTrazo(alGiro: progreso.distanceToNextManeuver)
-        // Solo los pasos que hacen falta (su distancia entera es un máximo de lo
-        // que queda en el primero)
-        var geometrias: [[PuntoRuta]] = []
-        var suma = 0.0
-        for paso in pasos {
-            geometrias.append(paso.geometry.map { PuntoRuta(latitud: $0.lat, longitud: $0.lng) })
-            suma += paso.distance
-            if suma > metros + 200 { break }
+        // Solo los pasos que hacen falta: del actual cuenta lo que queda
+        let cuantos = Trazo.pasosNecesarios(distancias: pasos.map { $0.distance },
+                                            restanteEnActual: progreso.distanceToNextManeuver, metros: metros)
+        let geometrias = pasos.prefix(cuantos).map { paso in
+            paso.geometry.map { PuntoRuta(latitud: $0.lat, longitud: $0.lng) }
         }
         let origen = PuntoRuta(latitud: ajustada.coordinates.lat, longitud: ajustada.coordinates.lng)
         return Trazo.tramo(pasos: geometrias, indice: indice.map { Int($0) }, desde: origen,

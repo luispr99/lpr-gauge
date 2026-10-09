@@ -1,6 +1,6 @@
 # Protocolo BLE móvil → cuadro
 
-> **Estado: borrador v0.4 (2026-10-09), sin validar.** Los puntos marcados
+> **Estado: borrador v0.5 (2026-10-09), sin validar.** Los puntos marcados
 > **[PENDIENTE]** faltan por completar. Mientras sea borrador, nada de lo que hay
 > aquí es definitivo y puede cambiar sin mantener compatibilidad. Los cambios de
 > cada versión están en la [sección 13](#13-cambios).
@@ -77,7 +77,7 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
 |---|---|---|---|
 | 0 | versión | u8 | Versión del protocolo del dispositivo: 1. |
 | 1 | tipo | u8 | 1 = cuadro de moto; 2 = firmware de referencia (solo serie). |
-| 2-3 | capacidades | u16 | Bit 0 `NAV`, bit 1 `GPS`, bit 2 `STATUS`, bit 3 `NAV_TEXT`, bit 4 `CONFIG`, bit 5 `MOVIL`, bit 6 `TRAZO`. |
+| 2-3 | capacidades | u16 | Bit 0 `NAV`, bit 1 `GPS`, bit 2 `STATUS`, bit 3 `NAV_TEXT`, bit 4 `CONFIG`, bit 5 `MOVIL`, bit 6 `TRAZO`, bit 7 `MOVIL` al cambiar (sección 7). |
 | 4 | frecuencia máxima | u8 | Mensajes por segundo y característica que acepta (0 = sin límite). |
 | 5-7 | versión de firmware | u8 × 3 | Mayor, menor, parche. |
 
@@ -141,6 +141,13 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
 - El cuadro ya lee el nivel de batería del iPhone por el servicio estándar
   0x180F. Aquí el nivel va también para los dispositivos que no lo lean, como el
   firmware de referencia.
+- **Al cambiar (v0.5, a petición del autor el 2026-10-09):** si el dispositivo
+  anuncia el bit 7 de capacidades, da `MOVIL` por bueno mientras dure la
+  conexión, sin caducidad. La app lo manda entonces solo al conectar, cuando
+  cambia el estado o el nivel, cuando `STATUS` pide reenvío y, si en 2 s no
+  llega su eco en `STATUS` (sin el bit de pide reenvío), otra vez. El
+  dispositivo lo olvida al desconectar y cuando la app deja de recibir los
+  avisos de `STATUS`. Sin el bit 7, como antes: cada 2 s y caduca a los 5 s.
 
 ## 7 bis. `NAV_TEXT` (escritura sin respuesta): texto de navegación
 
@@ -186,8 +193,9 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
   dispositivo, que ajusta la escala al tramo, se acerca al llegar al giro). El
   sentido de la marcha es el rumbo de la ruta unos metros por delante, no el
   del GPS.
-- **Ritmo:** la app lo manda al cambiar, como mucho una vez por segundo, y como
-  mínimo cada 2 s mientras haya tramo. Al dejar de haberlo manda uno con el
+- **Ritmo:** la app lo manda al cambiar, como mucho una vez por segundo (uno
+  que llegue antes sale en cuanto pasa el segundo), y lo repite a los 1,5-2 s
+  mientras haya tramo. Al dejar de haberlo manda uno con el
   bit 0 a cero. El dispositivo lo da por caducado a los 5 s.
 
 ## 8. Códigos de maniobra
@@ -228,15 +236,19 @@ códigos 0-30 de *Komoot BLE Connect*, como se planteó al principio.
   frecuencia.
 - La app manda `NAV`, `GPS` y `MOVIL` en cada cambio y, como mínimo, cada 2 s
   (mantenimiento), aunque no cambie nada. `NAV_TEXT` y `TRAZO`, igual mientras
-  haya texto o tramo (secciones 7 bis y 7 ter).
-- La app manda además el mantenimiento al recibir cada `STATUS`, si han pasado
-  1,5 s o más desde el anterior, y siempre que el `STATUS` pida reenvío. Es para
-  el **segundo plano** (y la pantalla bloqueada): los avisos BLE despiertan a la
-  app aunque iOS la haya suspendido y su temporizador no se dispare; con el
-  `STATUS` periódico del dispositivo (cada 2 s) basta.
+  haya texto o tramo (secciones 7 bis y 7 ter). Excepción: `MOVIL` con un
+  dispositivo que anuncia el bit 7, solo al cambiar (sección 7).
+- La app mira cada 0,5 s qué toca mandar y repite cada característica a los
+  1,5 s de su último envío, cada una por su cuenta: así no salen en ráfagas.
+- La app mira también qué toca al recibir cada `STATUS`, y lo manda todo cuando
+  el `STATUS` pide reenvío (como mucho cada 0,5 s). Es para el **segundo
+  plano** (y la pantalla bloqueada): los avisos BLE despiertan a la app aunque
+  iOS la haya suspendido y su temporizador no se dispare; con el `STATUS`
+  periódico del dispositivo (cada 2 s) basta.
 - El cuadro da por **caducado** un dato si pasan más de **5 s** sin recibir su
-  característica (decidido el 2026-10-08). Entonces muestra el mismo aviso que
-  sin GPS.
+  característica (decidido el 2026-10-08), salvo `MOVIL` con el bit 7 (v0.5),
+  que vale mientras dure la conexión. Entonces muestra el mismo aviso que sin
+  GPS.
 - **Edad del fix:** el GPS puede estar caducado aunque los mensajes lleguen.
 - **Al conectar,** la app lee `DEVICE_INFO`, se suscribe a `STATUS` y manda el
   estado completo sin esperar a ningún cambio.
@@ -272,6 +284,12 @@ códigos 0-30 de *Komoot BLE Connect*, como se planteó al principio.
 
 ## 13. Cambios
 
+- **v0.5 (2026-10-09):** bit 7 de capacidades, `MOVIL` al cambiar: con él, la
+  app manda `MOVIL` solo cuando cambia (con confirmación por el eco) y el
+  dispositivo lo da por bueno mientras dure la conexión (sección 7). Antes,
+  para todos: cada 2 s y caducidad de 5 s, que sigue sin el bit. Ritmo del
+  mantenimiento por característica (sección 10). La versión del formato sigue
+  siendo 1.
 - **v0.4 (2026-10-09):** característica `TRAZO` (sección 7 ter), bit 6 de
   capacidades, eco de `TRAZO` en el byte 6 de `STATUS` y mantenimiento al
   recibir `STATUS` en segundo plano (sección 10). La versión del formato sigue

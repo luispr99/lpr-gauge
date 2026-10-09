@@ -66,6 +66,44 @@ public enum Trazo {
         return salida
     }
 
+    /// Cuántos pasos, desde el actual, hacen falta para recorrer `metros` desde
+    /// la moto: del actual cuenta lo que queda (`restanteEnActual`), no su
+    /// distancia entera, que haría parar en el giro sin la carretera de salida
+    /// (lo vio la revisión de la 0.9.0); de los demás, su distancia, con 50 m de
+    /// margen. Al menos uno, si hay pasos.
+    public static func pasosNecesarios(distancias: [Double], restanteEnActual: Double, metros: Double) -> Int {
+        guard !distancias.isEmpty else { return 0 }
+        var suma = max(0, restanteEnActual)
+        var cuantos = 1
+        while suma < metros + 50 && cuantos < distancias.count {
+            suma += max(0, distancias[cuantos])
+            cuantos += 1
+        }
+        return cuantos
+    }
+
+    /// Rumbo de la marcha para el tramo: el de la ruta hasta `anticipacion`
+    /// metros por delante, pero sin pasar del final del paso actual (si no, la
+    /// cuerda cruzaría el giro y el dibujo rotaría hacia la salida, como vio la
+    /// revisión de la 0.9.0). A menos de 3 m del final, el del último segmento
+    /// del paso (por donde se llega al giro). Nil si no hay con qué calcularlo.
+    static func sentido(paso: [PuntoRuta]?, indice: Int?, desde origen: PuntoRuta, anticipacion: Double) -> Double? {
+        guard let paso else { return nil }
+        let enPaso = recorrer(pasos: [paso], indice: indice, desde: origen, metros: anticipacion)
+        if let fin = enPaso.last, distancia(origen, fin) >= 3 {
+            return rumbo(de: origen, a: fin)
+        }
+        // El último segmento del paso de 1 m o más
+        var i = paso.count - 1
+        while i > 0 {
+            if distancia(paso[i - 1], paso[i]) >= 1 {
+                return rumbo(de: paso[i - 1], a: paso[i])
+            }
+            i -= 1
+        }
+        return nil
+    }
+
     /// A los ejes de la moto: el origen en `origen` y el `rumbo` (grados desde
     /// el norte) hacia arriba.
     public static func aEjesMoto(_ puntos: [PuntoRuta], origen: PuntoRuta, rumbo: Double) -> [PuntoPlano] {
@@ -81,8 +119,9 @@ public enum Trazo {
 
     /// El tramo listo para el cuadro: `metros` de ruta por delante, en los ejes
     /// de la moto. El sentido de la marcha es el rumbo de la ruta hasta el punto
-    /// que está `anticipacion` metros por delante (más estable que el del GPS y
-    /// que el de un solo segmento). Se simplifica hasta que quepan
+    /// que está `anticipacion` metros por delante dentro del paso actual (más
+    /// estable que el del GPS y que el de un solo segmento; ver `sentido`). Se
+    /// simplifica hasta que quepan
     /// `maximoPuntos`. `giro` es el punto del próximo giro (el final del paso
     /// actual): su índice en el tramo, si está (a menos de 10 m de un punto).
     /// Nil si no hay al menos dos puntos.
@@ -97,8 +136,8 @@ public enum Trazo {
     ) -> (puntos: [PuntoPlano], giro: Int?)? {
         let ruta = recorrer(pasos: pasos, indice: indice, desde: origen, metros: total)
         guard ruta.count >= 2 else { return nil }
-        let adelante = recorrer(pasos: pasos, indice: indice, desde: origen, metros: anticipacion).last ?? ruta[1]
-        let sentido = distancia(origen, adelante) >= 1 ? rumbo(de: origen, a: adelante) : rumbo(de: origen, a: ruta[1])
+        let sentido = Self.sentido(paso: pasos.first, indice: indice, desde: origen, anticipacion: anticipacion)
+            ?? rumbo(de: origen, a: ruta[1])
 
         let limite = max(2, maximoPuntos)
         var tolerancia = 2.0

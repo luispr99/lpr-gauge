@@ -171,8 +171,8 @@ final class MensajesTests: XCTestCase {
     }
 
     func testDeviceInfoDelCuadroConTrazo() {
-        let info = DeviceInfo.decodificar([0x01, 0x01, 0x6C, 0x00, 0x00, 0x00, 0x02, 0x00])
-        XCTAssertEqual(info?.capacidades, [.status, .navText, .movil, .trazo])
+        let info = DeviceInfo.decodificar([0x01, 0x01, 0xEC, 0x00, 0x00, 0x00, 0x02, 0x00])
+        XCTAssertEqual(info?.capacidades, [.status, .navText, .movil, .trazo, .movilAlCambiar])
         XCTAssertEqual(info?.firmware, [0, 2, 0])
     }
 
