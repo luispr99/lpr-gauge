@@ -69,46 +69,6 @@ final class CurvasTests: XCTestCase {
         XCTAssertEqual(Curvas.medir(tramos: [norte, este]).curvas, 0)
     }
 
-    private func candidata(_ minutos: Double, curvas: Int, gradosPorKm: Double = 0) -> Candidata {
-        Candidata(
-            segundos: minutos * 60,
-            sinuosidad: Sinuosidad(curvas: curvas, gradosPorKm: gradosPorKm, metros: 0)
-        )
-    }
-
-    func testElegirSinCandidatas() {
-        XCTAssertNil(Curvas.elegir([]))
-    }
-
-    func testElegirRapidaYDivertidaDentroDelMargen() {
-        let candidatas = [
-            candidata(70, curvas: 40),
-            candidata(60, curvas: 10),
-            candidata(74, curvas: 90),   // +23 %: dentro
-            candidata(80, curvas: 200),  // +33 %: fuera
-        ]
-        let eleccion = Curvas.elegir(candidatas, margen: 0.25)
-        XCTAssertEqual(eleccion?.rapida, 1)
-        XCTAssertEqual(eleccion?.divertida, 2)
-    }
-
-    func testDivertidaPuedeSerLaRapida() {
-        let candidatas = [candidata(60, curvas: 50), candidata(65, curvas: 20)]
-        let eleccion = Curvas.elegir(candidatas, margen: 0.25)
-        XCTAssertEqual(eleccion?.rapida, 0)
-        XCTAssertEqual(eleccion?.divertida, 0)
-    }
-
-    func testEmpateDeCurvasPorGradosYTiempo() {
-        let candidatas = [
-            candidata(60, curvas: 5, gradosPorKm: 10),
-            candidata(70, curvas: 30, gradosPorKm: 40),
-            candidata(65, curvas: 30, gradosPorKm: 40),
-            candidata(66, curvas: 30, gradosPorKm: 20),
-        ]
-        XCTAssertEqual(Curvas.elegir(candidatas, margen: 0.25)?.divertida, 2)
-    }
-
     func testNormalizarRumbo() {
         XCTAssertEqual(Curvas.normalizar(350), -10, accuracy: 0.001)
         XCTAssertEqual(Curvas.normalizar(-350), 10, accuracy: 0.001)

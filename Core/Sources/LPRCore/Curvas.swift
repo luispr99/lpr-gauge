@@ -26,19 +26,8 @@ public struct Sinuosidad: Equatable {
     }
 }
 
-/// Una ruta entre las que elegir: lo que tarda y sus curvas.
-public struct Candidata: Equatable {
-    public var segundos: Double
-    public var sinuosidad: Sinuosidad
-
-    public init(segundos: Double, sinuosidad: Sinuosidad) {
-        self.segundos = segundos
-        self.sinuosidad = sinuosidad
-    }
-}
-
 /// Cuenta las curvas de una ruta a partir de su trazado. Valhalla no las mide,
-/// así que «la más divertida» se elige con esto (docs/DECISIONES.md).
+/// así que «la más divertida» se elige con esto (Eleccion.swift).
 ///
 /// Se mide cada tramo por separado (un tramo es la carretera entre dos
 /// maniobras), para que los giros en los cruces no cuenten como curvas. Cada
@@ -131,38 +120,6 @@ public enum Curvas {
             hastaSiguiente -= segmento
         }
         return (salida, total)
-    }
-
-    /// Cuánto más puede tardar «la más divertida» que la más rápida (0,25 = un
-    /// 25 % más). Es un supuesto, pendiente de ajustar con rutas reales.
-    public static let margenTiempo = 0.25
-
-    /// Elige entre las candidatas. La más rápida es la que menos tarda. La más
-    /// divertida, la de más curvas entre las que no pasan del margen de tiempo
-    /// sobre la más rápida; a igualdad de curvas, la de más grados por km y,
-    /// después, la que menos tarda. Puede ser la misma que la más rápida.
-    /// Devuelve los índices, o nil si no hay candidatas.
-    public static func elegir(
-        _ candidatas: [Candidata],
-        margen: Double = margenTiempo
-    ) -> (rapida: Int, divertida: Int)? {
-        guard let rapida = candidatas.indices.min(by: { candidatas[$0].segundos < candidatas[$1].segundos })
-        else { return nil }
-        let limite = candidatas[rapida].segundos * (1 + margen)
-        let divertida = candidatas.indices
-            .filter { candidatas[$0].segundos <= limite }
-            .max { a, b in
-                let x = candidatas[a]
-                let y = candidatas[b]
-                if x.sinuosidad.curvas != y.sinuosidad.curvas {
-                    return x.sinuosidad.curvas < y.sinuosidad.curvas
-                }
-                if x.sinuosidad.gradosPorKm != y.sinuosidad.gradosPorKm {
-                    return x.sinuosidad.gradosPorKm < y.sinuosidad.gradosPorKm
-                }
-                return x.segundos > y.segundos
-            } ?? rapida
-        return (rapida, divertida)
     }
 
     /// Rumbo en grados desde el norte, en sentido horario.
