@@ -95,6 +95,8 @@ struct PlacaView: View {
                     Text("Con una ruta iniciada, la app manda el tramo de ruta que queda por delante para dibujarlo en la cara de navegación.")
                 }
             }
+            .scrollDismissesKeyboard(.interactively)
+            .botonOcultarTeclado()
             .navigationTitle("Placa")
             .safeAreaInset(edge: .bottom) {
                 Text("Versión \(versionApp) · protocolo v\(Int(Protocolo.version))")

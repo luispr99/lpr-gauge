@@ -41,6 +41,7 @@ struct NavegacionView: View {
                     }
                 }
             }
+            .botonOcultarTeclado()
             .sheet(isPresented: $mostrarAjustes) {
                 AjustesView(navegacion: navegacion)
             }
@@ -749,6 +750,7 @@ struct AjustesView: View {
                     Text("Vacío: el servidor público de FOSSGIS. Uso razonable, como mucho una petición por segundo.")
                 }
             }
+            .scrollDismissesKeyboard(.interactively)
             .navigationTitle("Ajustes")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -756,6 +758,7 @@ struct AjustesView: View {
                     Button("Listo") { cerrar() }
                 }
             }
+            .botonOcultarTeclado()
         }
     }
 }
