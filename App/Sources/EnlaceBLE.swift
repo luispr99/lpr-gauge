@@ -6,9 +6,9 @@ import UIKit
 import LPRCore
 
 /// Enlace BLE con el cuadro o con el firmware de referencia (docs/PROTOCOLO.md,
-/// v0.10). Manda `MOVIL` (estado de la batería del iPhone; con el cuadro, solo al
-/// cambiar), `NAV_TEXT` (texto de la navegación), `NAV` (siguiente maniobra y,
-/// desde la v0.10, el resumen del viaje),
+/// v0.11). Manda `MOVIL` (estado de la batería del iPhone; con el cuadro, solo al
+/// cambiar), `NAV_TEXT` (texto de la navegación), `NAV` (siguiente maniobra;
+/// desde la v0.10, el resumen del viaje, y desde la v0.11, el «y luego»),
 /// `TRAZO` (tramo de ruta por delante; con una placa que lo admite, con
 /// movimiento, v0.9) y, tras cada `TRAZO`, `CRUCES` (calles
 /// que salen del tramo), y lee `STATUS`. En segundo plano sigue con el modo
@@ -787,9 +787,9 @@ final class EnlaceBLE: NSObject, ObservableObject {
         // la revisión de la 0.10.0). Sin el resumen del viaje (v0.10): el
         // tiempo de viaje cambia cada segundo y NAV saldría siempre una vez
         // por segundo; va con la repetición (y, al llegar, con el cambio de
-        // banderas). Por eso se guarda aunque no cambie nada más
-        let cambia = nuevo
-            || nav.codificar(maximo: MensajeNav.longitud) != navActual.codificar(maximo: MensajeNav.longitud)
+        // banderas). Por eso se guarda aunque no cambie nada más. El «y luego»
+        // (v0.11) sí cuenta: solo cambia al cambiar de paso
+        let cambia = nuevo || nav.codificarSinResumen() != navActual.codificarSinResumen()
         navActual = nav
         guard cambia else { return }
         if nuevo { navActivo = true }
@@ -810,8 +810,8 @@ final class EnlaceBLE: NSObject, ObservableObject {
         navPendiente = false
         var mensaje = navActual
         mensaje.secuencia = secuenciaNav.siguiente()
-        // Con el resumen del viaje (v0.10) son 25 bytes; si la conexión no los
-        // admite, los 17 de la v0.6 (§2)
+        // Con el «y luego» (v0.11) son 31 bytes; si la conexión no los admite,
+        // los 25 de la v0.10 o los 17 de la v0.6 (§2)
         let maximo = periferico.maximumWriteValueLength(for: .withoutResponse)
         let bytes = mensaje.codificar(maximo: maximo)
         guard bytes.count <= maximo else {

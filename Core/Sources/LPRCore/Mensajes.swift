@@ -1,4 +1,4 @@
-// Codificación y decodificación de los mensajes (docs/PROTOCOLO.md, v0.10).
+// Codificación y decodificación de los mensajes (docs/PROTOCOLO.md, v0.11).
 // Reglas comunes (sección 3): little-endian, primer byte = versión, campos
 // nuevos al final; el receptor ignora los bytes que sobran y descarta los
 // mensajes cortos o con una versión que no conoce.
@@ -81,6 +81,13 @@ func u16Saturado(_ valor: Double?) -> UInt16 {
     return UInt16(min(65_534, max(0, valor.rounded())))
 }
 
+/// Un ángulo de NAV (bytes 7-8 y, desde la v0.11, 27-28) como i16: saturado
+/// en ±180; sin dato, `0x7FFF` (desconocido).
+func anguloNav(_ angulo: Int?) -> UInt16 {
+    guard let angulo else { return 0x7FFF }
+    return UInt16(bitPattern: Int16(min(180, max(-180, angulo))))
+}
+
 // MARK: - NAV (sección 5) y códigos de maniobra (sección 8)
 
 /// Código de maniobra del cuadro (§8, v0.6). La forma de la flecha la da el
@@ -134,6 +141,9 @@ public struct MensajeNav: Equatable {
     /// Con el resumen del viaje (v0.10): si el mensaje es más corto, el tiempo
     /// de viaje y la distancia recorrida son desconocidos.
     public static let longitudConResumen = 25
+    /// Con el «y luego» (v0.11): si el mensaje es más corto, no hay maniobra
+    /// luego (código 0) y sus campos son desconocidos.
+    public static let longitudConLuego = 31
 
     public var secuencia: UInt8
     public var banderas: BanderasNav
@@ -156,6 +166,15 @@ public struct MensajeNav: Equatable {
     public var tiempoViaje: Double?
     /// Metros recorridos desde que se inició la ruta, por el GPS (v0.10).
     public var distanciaRecorrida: Double?
+    /// La maniobra que va después de la siguiente («y luego», v0.11); sin
+    /// ella, desconocida (código 0).
+    public var maniobraLuego: CodigoManiobra
+    /// Como `modificador`, para la maniobra luego (v0.11).
+    public var modificadorLuego: UInt8
+    /// Como `angulo`, para la maniobra luego (v0.11).
+    public var anguloLuego: Int?
+    /// Metros entre la siguiente maniobra y la de luego (v0.11).
+    public var distanciaLuego: Double?
 
     public init(
         secuencia: UInt8,
@@ -169,7 +188,11 @@ public struct MensajeNav: Equatable {
         horaLlegada: Int? = nil,
         longitudPaso: Double? = nil,
         tiempoViaje: Double? = nil,
-        distanciaRecorrida: Double? = nil
+        distanciaRecorrida: Double? = nil,
+        maniobraLuego: CodigoManiobra = .desconocida,
+        modificadorLuego: UInt8 = 0,
+        anguloLuego: Int? = nil,
+        distanciaLuego: Double? = nil
     ) {
         self.secuencia = secuencia
         self.banderas = banderas
@@ -183,18 +206,23 @@ public struct MensajeNav: Equatable {
         self.longitudPaso = longitudPaso
         self.tiempoViaje = tiempoViaje
         self.distanciaRecorrida = distanciaRecorrida
+        self.maniobraLuego = maniobraLuego
+        self.modificadorLuego = modificadorLuego
+        self.anguloLuego = anguloLuego
+        self.distanciaLuego = distanciaLuego
     }
 
-    /// Los 25 bytes de la v0.10 o, si `maximo` (lo que admite la conexión) no
-    /// llega a 25, los 17 de la v0.6, sin el resumen del viaje (§2). Las
-    /// distancias y el tiempo restante se redondean y se saturan en 65 534; el
-    /// ángulo, en ±180; una hora de llegada fuera de 0-1439 va como
-    /// desconocida; el tiempo de viaje y la distancia recorrida se redondean
-    /// y se saturan en 4 294 967 294.
-    public func codificar(maximo: Int = longitudConResumen) -> [UInt8] {
+    /// Los 31 bytes de la v0.11 o, si `maximo` (lo que admite la conexión) no
+    /// llega a 31, los 25 de la v0.10, sin el «y luego»; y si tampoco llega a
+    /// 25, los 17 de la v0.6, sin el resumen del viaje (§2). Las distancias y
+    /// el tiempo restante se redondean y se saturan en 65 534; los ángulos, en
+    /// ±180; una hora de llegada fuera de 0-1439 va como desconocida; el
+    /// tiempo de viaje y la distancia recorrida se redondean y se saturan en
+    /// 4 294 967 294.
+    public func codificar(maximo: Int = longitudConLuego) -> [UInt8] {
         var bytes: [UInt8] = [Protocolo.version, secuencia, banderas.rawValue, maniobra.rawValue, modificador]
         bytes.anadirU16(u16Saturado(distancia))
-        bytes.anadirU16(angulo.map { UInt16(bitPattern: Int16(min(180, max(-180, $0)))) } ?? 0x7FFF)
+        bytes.anadirU16(anguloNav(angulo))
         bytes.anadirU16(u16Saturado(distanciaRestante.map { $0 / 10 }))
         bytes.anadirU16(u16Saturado(tiempoRestante.map { $0 / 60 }))
         bytes.anadirU16(horaLlegada.flatMap { hora -> UInt16? in
@@ -205,7 +233,24 @@ public struct MensajeNav: Equatable {
             bytes.anadirU32(u32Desconocido(tiempoViaje))
             bytes.anadirU32(u32Desconocido(distanciaRecorrida))
         }
+        if maximo >= Self.longitudConLuego {
+            bytes.append(maniobraLuego.rawValue)
+            bytes.append(modificadorLuego)
+            bytes.anadirU16(anguloNav(anguloLuego))
+            bytes.anadirU16(u16Saturado(distanciaLuego))
+        }
         return bytes
+    }
+
+    /// Los 31 bytes con el resumen del viaje como desconocido, para ver si ha
+    /// cambiado algo más que el resumen: el tiempo de viaje cambia cada
+    /// segundo y NAV no se reenvía solo por eso. El «y luego» sí cuenta (solo
+    /// cambia al cambiar de paso).
+    public func codificarSinResumen() -> [UInt8] {
+        var copia = self
+        copia.tiempoViaje = nil
+        copia.distanciaRecorrida = nil
+        return copia.codificar(maximo: Self.longitudConLuego)
     }
 
     /// Descarta lo corto y otra versión. Un código de maniobra que no conoce
@@ -240,6 +285,13 @@ public struct MensajeNav: Equatable {
             }
             mensaje.tiempoViaje = valor32(17)
             mensaje.distanciaRecorrida = valor32(21)
+        }
+        if bytes.count >= longitudConLuego {
+            mensaje.maniobraLuego = CodigoManiobra(rawValue: bytes[25]) ?? .desconocida
+            mensaje.modificadorLuego = bytes[26]
+            let anguloLuego = Int16(bitPattern: leerU16(bytes, 27))
+            mensaje.anguloLuego = anguloLuego == 0x7FFF ? nil : Int(anguloLuego)
+            mensaje.distanciaLuego = valor(29)
         }
         return mensaje
     }

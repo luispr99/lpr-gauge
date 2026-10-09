@@ -1,7 +1,7 @@
 # Vectores de prueba del protocolo
 
 Ejemplos de mensajes con sus bytes exactos, en hexadecimal y en el orden en que
-viajan. Salen de [PROTOCOLO.md](../PROTOCOLO.md) (v0.10). Las pruebas de `Core`
+viajan. Salen de [PROTOCOLO.md](../PROTOCOLO.md) (v0.11). Las pruebas de `Core`
 (`Core/Tests/LPRCoreTests/MensajesTests.swift`) comprueban estos mismos bytes; el
 firmware y la app de Android deberán pasar los mismos. Si cambia un vector,
 cambian a la vez el documento, las pruebas y este fichero.
@@ -38,22 +38,26 @@ cambian a la vez el documento, las pruebas y este fichero.
 
 ## `NAV`
 
-25 bytes desde la v0.10: versión, secuencia, flags, maniobra, modificador,
+31 bytes desde la v0.11: versión, secuencia, flags, maniobra, modificador,
 distancia (`u16`), ángulo (`i16`), distancia restante en decenas de metros,
 tiempo restante en minutos, hora de llegada en minutos desde la medianoche y
-longitud del paso (todos `u16`), y el resumen del viaje: tiempo de viaje en
-segundos y distancia recorrida en metros (los dos `u32`). Si la conexión no
-admite 25 bytes, la app manda los 17 primeros (sección 2 del protocolo).
-`FF FF FF FF FF FF FF FF` al final: los dos campos de la v0.10 desconocidos.
+longitud del paso (todos `u16`); el resumen del viaje: tiempo de viaje en
+segundos y distancia recorrida en metros (los dos `u32`, v0.10); y el «y
+luego» (v0.11): maniobra y modificador (`u8`), ángulo (`i16`) y distancia
+entre la siguiente maniobra y esa (`u16`). Si la conexión no admite 31
+bytes, la app manda los 25 primeros, y si tampoco admite 25, los 17 primeros
+(sección 2 del protocolo). `FF FF FF FF FF FF FF FF` en los bytes 17-24: el
+resumen desconocido; `00 00 FF 7F FF FF` al final: sin maniobra luego.
 
 | Caso | Bytes |
 |---|---|
-| Sin ruta, secuencia 0 (todo desconocido) | `01 00 00 00 00 FF FF FF 7F FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF` |
-| Secuencia 16, ruta activa, giro (2) a la derecha (90) a 350 m; quedan 12 340 m (1234 decenas) y 15 min; llegada a las 18:45 (1125); paso de 800 m; resumen desconocido | `01 10 01 02 00 5E 01 5A 00 D2 04 0F 00 65 04 20 03 FF FF FF FF FF FF FF FF` |
-| Secuencia 17, rotonda (3), tercera salida, a la izquierda (−90) a 120,4 m; 5004 m (500 decenas), 389 s (6 min), llegada a las 0:00, paso desconocido; resumen desconocido | `01 11 01 03 03 78 00 A6 FF F4 01 06 00 00 00 FF FF FF FF FF FF FF FF FF FF` |
-| Secuencia 32, al llegar: sin ruta activa, bit de llegada y código 5 | `01 20 08 05 00 FF FF FF 7F FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF` |
-| Secuencia 33, al llegar (v0.10): ruta activa y llegada (`09`), código 5, distancia 0; 1 h 23 min 45 s de viaje (5025 s) y 123 456 m recorridos (media: 88,4 km/h) | `01 21 09 05 00 00 00 FF 7F FF FF FF FF FF FF FF FF A1 13 00 00 40 E2 01 00` |
-| Saturado: recto a 70 000 m, ángulo 200, 1 000 000 m, 10 000 000 s, llegada 1440, paso −5 m, 5 000 000 000 s de viaje, −5 m recorridos | `01 00 01 01 00 FE FF B4 00 FE FF FE FF FF FF 00 00 FE FF FF FF 00 00 00 00` |
+| Sin ruta, secuencia 0 (todo desconocido) | `01 00 00 00 00 FF FF FF 7F FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF 00 00 FF 7F FF FF` |
+| Secuencia 16, ruta activa, giro (2) a la derecha (90) a 350 m; quedan 12 340 m (1234 decenas) y 15 min; llegada a las 18:45 (1125); paso de 800 m; resumen desconocido | `01 10 01 02 00 5E 01 5A 00 D2 04 0F 00 65 04 20 03 FF FF FF FF FF FF FF FF 00 00 FF 7F FF FF` |
+| Secuencia 17, rotonda (3), tercera salida, a la izquierda (−90) a 120,4 m; 5004 m (500 decenas), 389 s (6 min), llegada a las 0:00, paso desconocido; resumen desconocido | `01 11 01 03 03 78 00 A6 FF F4 01 06 00 00 00 FF FF FF FF FF FF FF FF FF FF 00 00 FF 7F FF FF` |
+| Secuencia 32, al llegar: sin ruta activa, bit de llegada y código 5 | `01 20 08 05 00 FF FF FF 7F FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF 00 00 FF 7F FF FF` |
+| Secuencia 33, al llegar (v0.10): ruta activa y llegada (`09`), código 5, distancia 0; 1 h 23 min 45 s de viaje (5025 s) y 123 456 m recorridos (media: 88,4 km/h) | `01 21 09 05 00 00 00 FF 7F FF FF FF FF FF FF FF FF A1 13 00 00 40 E2 01 00 00 00 FF 7F FF FF` |
+| Secuencia 18, ruta activa, giro (2) a la derecha (90) a 80 m; quedan 2000 m (200 decenas) y 4 min; llegada a las 10:00 (600); paso de 300 m; 754 s de viaje y 9000 m recorridos; y luego (v0.11): rotonda (3), segunda salida, ángulo −45, a 120 m de la siguiente | `01 12 01 02 00 50 00 5A 00 C8 00 04 00 58 02 2C 01 F2 02 00 00 28 23 00 00 03 02 D3 FF 78 00` |
+| Saturado: recto a 70 000 m, ángulo 200, 1 000 000 m, 10 000 000 s, llegada 1440, paso −5 m, 5 000 000 000 s de viaje, −5 m recorridos | `01 00 01 01 00 FE FF B4 00 FE FF FE FF FF FF 00 00 FE FF FF FF 00 00 00 00 00 00 FF 7F FF FF` |
 
 - Flags: ruta activa `01`, más recalculando `03`, más fuera de ruta `05`;
   llegada `08` (con ruta activa, `09`).
@@ -62,13 +66,16 @@ admite 25 bytes, la app manda los 17 primeros (sección 2 del protocolo).
   llegada fuera de 0-1439, o lo que no es finito, va como desconocido. El
   tiempo de viaje y la distancia recorrida se redondean y se saturan en
   4 294 967 294 (`FE FF FF FF`); lo negativo va como 0 y lo que no es finito,
-  como desconocido.
-- Con una conexión que no admite 25 bytes, el de la llegada sale como
-  `01 21 09 05 00 00 00 FF 7F FF FF FF FF FF FF FF FF` (17 bytes).
+  como desconocido. El ángulo y la distancia del «y luego», igual que los de
+  la siguiente maniobra: ángulo 200 y 70 000 m van como `B4 00 FE FF`.
+- Con una conexión que admite de 25 a 30 bytes, el del «y luego» sale sin
+  los 6 últimos (25 bytes); con una que no admite 25, el de la llegada sale
+  como `01 21 09 05 00 00 00 FF 7F FF FF FF FF FF FF FF FF` (17 bytes).
 - Al decodificar: con 9 a 16 bytes, los campos de la v0.6 son desconocidos
   (`01 05 01 01 00 64 00 00 00`: recto a 100 m, ángulo 0); con 17 a 24, los
-  de la v0.10; un código de maniobra que no está en la tabla (por ejemplo, 9)
-  se lee como 0; se descartan `01 05 01 01 00 64 00 00` (corto) y la
+  de la v0.10; con 25 a 30, los de la v0.11 (sin maniobra luego); un código
+  de maniobra que no está en la tabla (por ejemplo, 9), también en el byte
+  25, se lee como 0; se descartan `01 05 01 01 00 64 00 00` (corto) y la
   versión 2.
 - Ángulo de las rotondas a partir de los grados recorridos dentro, circulando
   por la derecha: 90 → 90, 180 → 0, 270 → −90, 360 → −180, 0 → 180, 450 → 90;

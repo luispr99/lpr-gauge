@@ -810,17 +810,12 @@ final class Navegacion: ObservableObject {
             let principal = visual.primaryContent
             // El número de salida de la próxima rotonda va en el paso
             // siguiente; ya dentro de ella (instrucción «salga de la
-            // rotonda»), en el actual, que es el de la rotonda (comprobado con
-            // respuestas de Valhalla; lo vio la revisión de la 0.10.0). El lado
-            // de la circulación, del paso de la maniobra
+            // rotonda»), en el actual, que es el de la rotonda
+            // (Flechas.salidaRotonda; la misma regla vale para el «y luego»).
+            // El lado de la circulación, del paso de la maniobra
             let siguiente = estado.remainingSteps?.dropFirst().first
-            let salidaRotonda: UInt8?
-            switch principal.maneuverType {
-            case .exitRoundabout?, .exitRotary?:
-                salidaRotonda = siguiente?.roundaboutExitNumber ?? estado.currentStep?.roundaboutExitNumber
-            default:
-                salidaRotonda = siguiente?.roundaboutExitNumber
-            }
+            let salidaRotonda = Flechas.salidaRotonda(tipo: principal.maneuverType, paso: estado.currentStep,
+                                                      despues: siguiente)
             maniobra = Maniobra(
                 tipo: principal.maneuverType,
                 modificador: principal.maneuverModifier,
@@ -1021,7 +1016,10 @@ final class Navegacion: ObservableObject {
     /// llegada y distancia 0, hasta pulsar «Terminar»: el cuadro enseña la
     /// bandera (a petición del autor, 2026-10-09; §5). Al terminar, nil: el
     /// enlace manda uno sin ruta activa. Con ruta, también al llegar, el
-    /// tiempo de viaje y la distancia recorrida (v0.10), para el resumen.
+    /// tiempo de viaje y la distancia recorrida (v0.10), para el resumen. Y la
+    /// maniobra que va después de la siguiente, con los metros entre las dos
+    /// («y luego», v0.11; Flechas.luego); el cuadro decide si la enseña (la
+    /// enseña si están a 150 m o menos, §5).
     private func navParaCuadro(_ estado: NavigationState) -> MensajeNav? {
         guard navegando else { return nil }
         let viaje = cuentakilometros?.resumen(ahora: Date())
@@ -1038,6 +1036,12 @@ final class Navegacion: ObservableObject {
         if recalculando { banderas.insert(.recalculando) }
         if fueraDeRuta { banderas.insert(.fueraDeRuta) }
         let codigo = Flechas.codigo(maniobra)
+        // Y luego (v0.11): solo si hay siguiente maniobra y no es la llegada
+        // (después del destino no hay nada); sin ella, código 0 y lo demás
+        // desconocido
+        let luego: (maniobra: Maniobra, metros: Double)? =
+            codigo == .desconocida || codigo == .llegada ? nil : Flechas.luego(pasos)
+        let codigoLuego = Flechas.codigo(luego?.maniobra)
         return MensajeNav(
             secuencia: 0,
             banderas: banderas,
@@ -1052,7 +1056,12 @@ final class Navegacion: ObservableObject {
             // El paso actual entero, para el avance hacia la maniobra
             longitudPaso: pasos.first?.distance,
             tiempoViaje: viaje?.segundos,
-            distanciaRecorrida: viaje?.metros
+            distanciaRecorrida: viaje?.metros,
+            maniobraLuego: codigoLuego,
+            modificadorLuego: codigoLuego == .rotonda ? (luego?.maniobra.salidaRotonda ?? 0) : 0,
+            anguloLuego: Flechas.angulo(luego?.maniobra),
+            // El paso siguiente entero: de la siguiente maniobra a la de luego
+            distanciaLuego: luego?.metros
         )
     }
 

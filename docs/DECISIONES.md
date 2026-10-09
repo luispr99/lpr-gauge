@@ -779,6 +779,55 @@ final.
   estudio, que pedía los mismos y más) y sin un cuadro con el firmware
   nuevo.
 
+### 2026-10-09 · «Y luego» en `NAV` (0.15.0)
+
+- **Petición del autor (protocolo v0.11, `PROTOCOLO.md` §5 y §13):** no
+  perder la segunda de dos giros seguidos. El cuadro enseña en pequeño,
+  junto a la flecha grande, la maniobra que va después de la siguiente
+  cuando las dos están a 150 m o menos (supuesto a ajustar).
+- **`NAV` pasa de 25 a 31 bytes:** maniobra y modificador (`u8`), ángulo
+  (`i16`) y distancia entre la siguiente maniobra y esa (`u16`), con los
+  mismos códigos, ángulos y saturaciones que la siguiente. Sin maniobra
+  luego: `00 00 FF 7F FF FF`. La app manda lo que quepa en lo que admita la
+  conexión: 31, 25 o 17 bytes (§2).
+- **De dónde sale.** Cada paso de Ferrostar trae las instrucciones de la
+  maniobra del final del paso: la siguiente maniobra es la del final del
+  paso actual (la instrucción que elige Ferrostar, como hasta ahora) y la de
+  luego, la del final del paso siguiente. Comprobado el 2026-10-09 con una
+  respuesta OSRM de Valhalla de los estudios (no entra en el repositorio):
+  las instrucciones de cada paso describen la maniobra con la que empieza el
+  siguiente, y el último paso, el de la llegada, mide 0 m y no trae ninguna.
+  - De ese paso, la primera instrucción: la que se enseñaría al empezarlo
+    (supuesto: las de un mismo paso describen la misma maniobra).
+  - Las mismas reglas que la siguiente (`Flechas`): código, ángulo nominal,
+    número de salida de la rotonda (del paso de después o, al salir de la
+    rotonda, del mismo; la regla está ahora en `Flechas.salidaRotonda` y la
+    usan las dos) y lado de la circulación. Si ese paso acaba en el
+    destino, llegada (código 5).
+  - La distancia es la longitud de ese paso (`RouteStep.distance`, la de
+    Valhalla), en metros.
+  - Sin maniobra luego (código 0 y lo demás desconocido): si no hay paso
+    siguiente o no trae instrucción, si la de luego sale con código
+    desconocido y, por decisión de la implementación, si la siguiente es
+    desconocida o la llegada (después del destino no hay nada). Al llegar,
+    tampoco.
+  - La app la manda siempre que la haya; el umbral de 150 m lo aplica el
+    cuadro.
+- **Ritmo.** El enlace mira si `NAV` ha cambiado con los 31 bytes sin el
+  resumen del viaje (`MensajeNav.codificarSinResumen`): el «y luego» cuenta,
+  pero solo cambia al cambiar de paso, con la siguiente maniobra, así que
+  `NAV` no sale cada segundo por él.
+- **El cuadro necesita un firmware con el «y luego» para enseñarlo.** Uno
+  anterior lo ignora (§3), siempre que acepte una escritura de 31 bytes en
+  `NAV`; sin comprobar en el cuadro.
+- **Sin probar:** sin compilar en local (no hay Swift en Windows); las
+  pruebas de `Core` (codificación, decodificación y recorte a 25 y 17
+  bytes) corren en el CI. La elección de la maniobra luego está en la app
+  (usa los tipos de Ferrostar) y no tiene prueba automática. Sin probar en
+  el iPhone ni en la moto, y sin un cuadro con el firmware nuevo.
+- **Cuadro:** se hace en su proyecto (el código no entra en este
+  repositorio).
+
 ### 2026-10-09 · Navegación: servidores, buscador y Ferrostar
 
 - **Origen:** el autor propuso usar lo mismo que la web

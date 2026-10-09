@@ -114,6 +114,48 @@ enum Flechas {
         }
     }
 
+    /// Número de salida de la rotonda de la maniobra que hay al final de
+    /// `paso`: va en el paso que empieza en ella (`despues`); ya dentro de la
+    /// rotonda (instrucción «salga de la rotonda»), en `paso`, que es el de la
+    /// rotonda (comprobado con respuestas de Valhalla; lo vio la revisión de
+    /// la 0.10.0).
+    static func salidaRotonda(tipo: ManeuverType?, paso: RouteStep?, despues: RouteStep?) -> UInt8? {
+        switch tipo {
+        case .exitRoundabout?, .exitRotary?:
+            return despues?.roundaboutExitNumber ?? paso?.roundaboutExitNumber
+        default:
+            return despues?.roundaboutExitNumber
+        }
+    }
+
+    /// La maniobra que va después de la siguiente («y luego», NAV v0.11, §5)
+    /// y los metros entre las dos. La siguiente maniobra es la del final del
+    /// paso actual (`pasos[0]`); la de luego, la del final del paso siguiente
+    /// (`pasos[1]`), con las mismas reglas que la siguiente (código, ángulo y
+    /// salida de rotonda; llegada si ese paso acaba en el destino). La
+    /// distancia es la longitud de ese paso. La instrucción, la primera del
+    /// paso: la que se enseñaría al empezarlo (supuesto: las de un mismo paso
+    /// describen la misma maniobra). Nil si no hay paso siguiente, si no tiene
+    /// instrucción (el último paso, el de la llegada, de longitud 0, no la
+    /// tiene en las respuestas de Valhalla) o si su código es desconocido.
+    static func luego(_ pasos: [RouteStep]) -> (maniobra: Maniobra, metros: Double)? {
+        guard pasos.count >= 2, let visual = pasos[1].visualInstructions.first else { return nil }
+        let paso = pasos[1]
+        let despues: RouteStep? = pasos.count >= 3 ? pasos[2] : nil
+        let contenido = visual.primaryContent
+        let maniobra = Maniobra(
+            tipo: contenido.maneuverType,
+            modificador: contenido.maneuverModifier,
+            gradosRotonda: contenido.roundaboutExitDegrees,
+            salidaRotonda: salidaRotonda(tipo: contenido.maneuverType, paso: paso, despues: despues),
+            ladoCirculacion: despues?.drivingSide ?? paso.drivingSide,
+            // El cuadro no recibe texto para la de luego
+            texto: ""
+        )
+        guard codigo(maniobra) != .desconocida else { return nil }
+        return (maniobra: maniobra, metros: paso.distance)
+    }
+
     // MARK: - Texto de la maniobra
 
     /// Lo que se escribe junto a la flecha, en el iPhone y en el cuadro: solo

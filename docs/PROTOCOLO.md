@@ -1,6 +1,6 @@
 # Protocolo BLE móvil → cuadro
 
-> **Estado: borrador v0.10 (2026-10-09), sin validar.** Los puntos marcados
+> **Estado: borrador v0.11 (2026-10-09), sin validar.** Los puntos marcados
 > **[PENDIENTE]** faltan por completar. Mientras sea borrador, nada de lo que hay
 > aquí es definitivo y puede cambiar sin mantener compatibilidad. Los cambios de
 > cada versión están en la [sección 13](#13-cambios).
@@ -57,8 +57,9 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
   app consulta `maximumWriteValueLength(for:)` en tiempo de ejecución. Las
   excepciones son `NAV_TEXT` (sección 7 bis), `TRAZO` (sección 7 ter) y
   `CRUCES` (sección 7 quater), que se ajustan al MTU de la conexión, y `NAV`
-  desde la v0.10 (25 bytes con el resumen del viaje): si la conexión no admite
-  25 bytes, la app lo manda sin los campos de la v0.10 (17 bytes).
+  desde la v0.10 (25 bytes con el resumen del viaje; 31 con el «y luego» de la
+  v0.11): la app manda los campos que quepan en lo que admita la conexión, de
+  17, 25 o 31 bytes.
 
 ## 3. Reglas comunes de codificación
 
@@ -105,9 +106,20 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
 | 15-16 | longitud del paso | u16 | `0xFFFF` | Metros del paso actual entero, de la maniobra anterior a la siguiente; satura en 65 534 (v0.6). Con la distancia, da el avance hacia la maniobra. |
 | 17-20 | tiempo de viaje | u32 | `0xFFFFFFFF` | Segundos desde que se inició la ruta, paradas incluidas; los recálculos no lo reinician (v0.10). |
 | 21-24 | distancia recorrida | u32 | `0xFFFFFFFF` | Metros recorridos desde que se inició la ruta, sumando las posiciones del GPS (v0.10). |
+| 25 | luego: maniobra | u8 | 0 | La maniobra que va después de la siguiente (código de la sección 8); 0 si no hay (v0.11). |
+| 26 | luego: modificador | u8 | 0 | Como el byte 4, para esa maniobra (v0.11). |
+| 27-28 | luego: ángulo | i16 | `0x7FFF` | Como los bytes 7-8, para esa maniobra (v0.11). |
+| 29-30 | luego: distancia | u16 | `0xFFFF` | Metros entre la siguiente maniobra y esa; satura en 65 534 (v0.11). |
 
 - Longitud mínima: 9 bytes. Los campos de la v0.6 están si el mensaje tiene 17
-  bytes o más; los de la v0.10, si tiene 25 o más; si no, son desconocidos.
+  bytes o más; los de la v0.10, si tiene 25 o más; los de la v0.11, si tiene
+  31 o más; si no, son desconocidos.
+- **«Y luego» (v0.11, a petición del autor el 2026-10-09):** la app manda la
+  maniobra que va después de la siguiente y la distancia entre las dos, con
+  la misma regla de códigos y ángulos. Si las dos están a 150 m o menos
+  (supuesto a ajustar), el cuadro la enseña en pequeño junto a la grande,
+  para no perder la segunda de dos giros seguidos. Sin ella (última
+  maniobra), código 0.
 - **Resumen del viaje (v0.10, a petición del autor el 2026-10-09: «Cuando
   termina la ruta estaría bien que saliesen datos como tiempo de trayecto,
   kilometros totales y velocidad media»):** la app manda el tiempo de viaje y
@@ -466,6 +478,9 @@ la da el ángulo de `NAV` (sección 5). Ya no se intenta seguir los códigos
 
 ## 13. Cambios
 
+- **v0.11 (2026-10-09):** `NAV` con la maniobra que va después de la
+  siguiente y la distancia entre las dos («y luego», sección 5), 31 bytes. La
+  versión del formato sigue siendo 1.
 - **v0.10 (2026-10-09):** `NAV` con el tiempo de viaje y la distancia
   recorrida (sección 5), para el resumen al llegar. En `CRUCES`, la app solo
   manda calles de carretera (sección 7 quater). La versión del formato sigue
