@@ -1360,16 +1360,16 @@ Ferrostar:
 - **GPS solo con ruta:** la app ya no enciende el GPS al abrirse. Se enciende
   al calcular rutas (con destino) y espera hasta 10 s a una posición de 30 s
   o menos; se apaga al cancelar, al llegar y al terminar
-  (\`ProveedorUbicacion.apagar\`). El mapa de «Navegar» sigue enseñando la
+  (`ProveedorUbicacion.apagar`). El mapa de «Navegar» sigue enseñando la
   posición con MapKit mientras está en pantalla (no es el GPS de la app).
 - **Desde el cuadro con la app en segundo plano (prueba):** al llegar la
-  orden, se pide tiempo a iOS (\`beginBackgroundTask\`), se carga la ruta y se
-  intenta arrancar el GPS con \`CLServiceSession\` (iOS 18) y
-  \`CLLocationUpdate.liveUpdates\` (iOS 17). Base: respuesta de un ingeniero de
+  orden, se pide tiempo a iOS (`beginBackgroundTask`), se carga la ruta y se
+  intenta arrancar el GPS con `CLServiceSession` (iOS 18) y
+  `CLLocationUpdate.liveUpdates` (iOS 17). Base: respuesta de un ingeniero de
   Apple en los foros de desarrolladores, junio de 2025
   (https://developer.apple.com/forums/thread/787607; no es documentación):
   con las APIs nuevas se puede si la app ha estado en primer plano al menos
-  una vez; con \`startUpdatingLocation()\`, no. Si en 10 s no hay posiciones,
+  una vez; con `startUpdatingLocation()`, no. Si en 10 s no hay posiciones,
   la orden contesta «abre la app». El registro de «Placa» apunta qué pasó.
 - **Restauración de estado de Bluetooth:** el gestor central lleva
   identificador de restauración; si iOS cierra la app para liberar memoria,
