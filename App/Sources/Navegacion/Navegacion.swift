@@ -191,7 +191,13 @@ final class Navegacion: ObservableObject {
     private var maniobraEscala: ClaveManiobra?
     /// La ruta del guiado con sus cruces, para el cuadro (CRUCES): la de la
     /// respuesta en formato OSRM con el mismo trazado (RutasRecientes).
-    private var rutaCruces: RutaConCruces?
+    private var rutaCruces: RutaConCruces? {
+        didSet { crucesConAnillosGuardados = nil }
+    }
+    /// Los cruces de rutaCruces para un cuadro con anillos, sin las calles del
+    /// anillo en las rotondas cuyo anillo va en el mensaje (esos índices): se
+    /// guardan para no rehacerlos cada segundo mientras no cambian.
+    private var crucesConAnillosGuardados: (indices: [Int], cruces: [Cruce])?
 
     /// Para el mapa del guiado: la ruta, la posición (ajustada a la ruta si se va
     /// por ella), el rumbo y el punto del próximo giro.
@@ -851,14 +857,18 @@ final class Navegacion: ObservableObject {
                 }
                 // Con un cuadro que dibuja los anillos de las rotondas (v0.8),
                 // los de este tramo, con la misma ventana, y las calles sin las
-                // del anillo (RutaConCruces.crucesConAnillos)
+                // del anillo solo en esas rotondas: si no caben todas, las
+                // demás van con sus calles (crucesParaAnillos)
                 let conAnillos = enlace.admiteAnillos
                 var anillos: [AnilloCruce] = []
+                var indicesAnillos: [Int] = []
                 if conAnillos, let rutaCruces, let ventana {
-                    anillos = Cruces.anillos(de: rutaCruces.anillos, ruta: calculo.tramo.ruta,
-                                             sentido: calculo.tramo.sentido, ventana: ventana)
+                    let elegidos = Cruces.anillosConIndices(de: rutaCruces.anillos, ruta: calculo.tramo.ruta,
+                                                            sentido: calculo.tramo.sentido, ventana: ventana)
+                    anillos = elegidos.anillos
+                    indicesAnillos = elegidos.indices
                 }
-                let cruces = (conAnillos ? rutaCruces?.crucesConAnillos : rutaCruces?.cruces) ?? []
+                let cruces = conAnillos ? crucesParaAnillos(indicesAnillos) : (rutaCruces?.cruces ?? [])
                 let calles = enlace.admiteCruces
                     ? Cruces.calles(de: cruces, ruta: calculo.tramo.ruta,
                                     sentido: calculo.tramo.sentido,
@@ -871,6 +881,20 @@ final class Navegacion: ObservableObject {
                 enlace.ponerTrazo(nil)
             }
         }
+    }
+
+    /// Los cruces para un cuadro con anillos, sin las calles del anillo solo en
+    /// las rotondas `indices` (RutaConCruces.crucesConAnillosSoloEn(_:)). Los
+    /// anillos del mensaje cambian pocas veces (al entrar uno en el tramo o al
+    /// dejarlo atrás): mientras sean los mismos, los guardados.
+    private func crucesParaAnillos(_ indices: [Int]) -> [Cruce] {
+        guard let rutaCruces else { return [] }
+        if let guardados = crucesConAnillosGuardados, guardados.indices == indices {
+            return guardados.cruces
+        }
+        let cruces = rutaCruces.crucesConAnillosSoloEn(indices)
+        crucesConAnillosGuardados = (indices: indices, cruces: cruces)
+        return cruces
     }
 
     /// La siguiente maniobra para el cuadro (NAV, §5 y §8): código y ángulo de

@@ -243,9 +243,8 @@ enum AjusteCirculo {
 /// Una calle de un cruce de una rotonda con anillo, en metros desde el centro
 /// del anillo (x al este, y al norte).
 private struct CalleDeRotonda {
-    /// Índice del cruce y de la calle en él.
+    /// Índice del cruce.
     var cruce: Int
-    var calle: Int
     var punto: PuntoPlano
     var rumbo: Double
     var entrada: Bool?
@@ -260,6 +259,9 @@ extension Cruces {
     /// radial hacia fuera es el propio anillo, que ya se dibuja entero (acertó
     /// en 91 de 92 calles).
     static let gradosAnillo = 90.0
+    /// Dos calles de un mismo cruce de la rotonda a menos de estos grados son
+    /// una (paso b de anillo/propuesta.js: en Cuatro Caminos, 229° y 251°).
+    static let gradosMismoCruce = 30.0
     /// Brazos con isleta: dos calles seguidas, la primera de salida de la
     /// rotonda (`entry` true) y la segunda de entrada (`entry` false), de
     /// cruces distintos a estos grados o menos vistos desde el centro...
@@ -273,25 +275,37 @@ extension Cruces {
     static let metrosParalelasBrazo = 30.0
 
     /// Los cruces para un cuadro que dibuja los anillos (v0.8). En los cruces
-    /// de cada rotonda con anillo (Cruce.anillo), en el orden de la ruta:
-    /// - fuera las calles que forman más de `gradosAnillo` con la radial hacia
-    ///   fuera: son el anillo;
-    /// - los brazos con isleta (`esBrazoConIsleta`) quedan en una calle, en el
-    ///   anillo a medio camino entre sus dos cruces y con el rumbo medio. Va
+    /// de cada rotonda con anillo (Cruce.anillo, el índice en `anillos`), en el
+    /// orden de la ruta:
+    /// - a) fuera las calles que forman más de `gradosAnillo` con la radial
+    ///   hacia fuera: son el anillo;
+    /// - b) las calles de un mismo cruce a menos de `gradosMismoCruce` quedan
+    ///   en una, la primera, con el rumbo medio y por la que se puede entrar si
+    ///   se puede por alguna (0.12.1; faltaba en la 0.12.0);
+    /// - c) los brazos con isleta (`esBrazoConIsleta`) quedan en una calle, en
+    ///   el anillo a medio camino entre sus dos cruces y con el rumbo medio. Va
     ///   en un cruce nuevo, justo detrás del primero, con el recorrido de ese
     ///   primero y por el que se puede entrar.
-    /// Los cruces que se quedan sin calles se quitan; los demás no cambian. Es
-    /// el algoritmo de anillo/propuesta.js del estudio con las rutas reales
-    /// (docs/DECISIONES.md, 0.12.0).
-    public static func conAnillos(_ cruces: [Cruce], anillos: [Anillo]) -> [Cruce] {
+    /// Con `soloEn`, solo en las rotondas de esos índices; en las demás, los
+    /// cruces se quedan como están. Los cruces que se quedan sin calles se
+    /// quitan; los demás no cambian. Es el algoritmo de anillo/propuesta.js del
+    /// estudio con las rutas reales (docs/DECISIONES.md, 0.12.0).
+    public static func conAnillos(_ cruces: [Cruce], anillos: [Anillo], soloEn elegidos: Set<Int>? = nil) -> [Cruce] {
         guard !anillos.isEmpty else { return cruces }
-        // Las calles que se quedan en cada cruce de una rotonda y los cruces
-        // nuevos de los brazos, que van detrás del suyo
-        var quedan: [Int: [Int]] = [:]
+        // Los cruces de cada rotonda, de una pasada
+        var suyosDe: [Int: [Int]] = [:]
+        for (c, cruce) in cruces.enumerated() {
+            if let indice = cruce.anillo, elegidos?.contains(indice) ?? true {
+                suyosDe[indice, default: []].append(c)
+            }
+        }
+        // Las calles que se quedan en cada cruce de una rotonda (con su rumbo,
+        // que el paso b puede cambiar) y los cruces nuevos de los brazos, que
+        // van detrás del suyo
+        var quedan: [Int: [(rumbo: Double, entrada: Bool?)]] = [:]
         var nuevos: [Int: [Cruce]] = [:]
         for (indice, anillo) in anillos.enumerated() {
-            let suyos = cruces.indices.filter { cruces[$0].anillo == indice }
-            guard !suyos.isEmpty else { continue }
+            guard let suyos = suyosDe[indice], !suyos.isEmpty else { continue }
             let origen = anillo.centro
             let coseno = cos(origen.latitud * .pi / 180)
             guard coseno.isFinite, coseno > 1e-6 else { continue }
@@ -304,8 +318,8 @@ extension Cruces {
                           longitud: origen.longitud + punto.x / (Trazo.metrosPorGrado * coseno))
             }
 
-            // Las calles de la rotonda, sin las del anillo
-            var calles: [CalleDeRotonda] = []
+            // a) Las calles de la rotonda, sin las del anillo
+            var todas: [CalleDeRotonda] = []
             for c in suyos {
                 quedan[c] = []
                 let punto = plano(cruces[c].punto)
@@ -314,12 +328,29 @@ extension Cruces {
                 let radial = rumbo(de: punto)
                 for (k, rumboCalle) in cruces[c].rumbos.enumerated() {
                     if conRadial && abs(diferenciaAngular(rumboCalle, radial)) > gradosAnillo { continue }
-                    calles.append(CalleDeRotonda(cruce: c, calle: k, punto: punto, rumbo: rumboCalle,
-                                                 entrada: cruces[c].entrada(k), radial: radial))
+                    todas.append(CalleDeRotonda(cruce: c, punto: punto, rumbo: rumboCalle,
+                                                entrada: cruces[c].entrada(k), radial: radial))
                 }
             }
 
-            // Los brazos con isleta, en una
+            // b) Las de un mismo cruce casi iguales, en una, antes de buscar
+            // los brazos: cada una se compara con las que ya quedan de su
+            // cruce, con el rumbo ya juntado
+            var calles: [CalleDeRotonda] = []
+            for calle in todas {
+                if let k = calles.firstIndex(where: {
+                    $0.cruce == calle.cruce && abs(diferenciaAngular($0.rumbo, calle.rumbo)) < gradosMismoCruce
+                }) {
+                    calles[k].rumbo = rumboMedio(calles[k].rumbo, calle.rumbo)
+                    if calle.entrada == true {
+                        calles[k].entrada = true
+                    }
+                } else {
+                    calles.append(calle)
+                }
+            }
+
+            // c) Los brazos con isleta, en una
             var i = 0
             while i < calles.count {
                 let a = calles[i]
@@ -339,7 +370,7 @@ extension Cruces {
                     ))
                     i += 2
                 } else {
-                    quedan[a.cruce, default: []].append(a.calle)
+                    quedan[a.cruce, default: []].append((rumbo: a.rumbo, entrada: a.entrada))
                     i += 1
                 }
             }
@@ -353,8 +384,8 @@ extension Cruces {
             }
             if !calles.isEmpty {
                 var copia = cruce
-                copia.rumbos = calles.map { cruce.rumbos[$0] }
-                copia.entradas = calles.map { cruce.entrada($0) }
+                copia.rumbos = calles.map { $0.rumbo }
+                copia.entradas = calles.map { $0.entrada }
                 resultado.append(copia)
             }
             resultado += nuevos[c] ?? []
@@ -417,21 +448,36 @@ extension Cruces {
         ventana: ClosedRange<Double>,
         maximo: Int = MensajeCruces.maximoAnillos
     ) -> [AnilloCruce] {
-        guard let origen = ruta.first, maximo > 0, !anillos.isEmpty else { return [] }
-        let elegidos: [Anillo] = anillos.enumerated()
-            .filter {
-                $0.element.recorridoEntrada <= ventana.upperBound
-                    && $0.element.recorridoSalida >= ventana.lowerBound - metrosAnilloDetras
-            }
-            .sorted {
-                $0.element.recorridoEntrada != $1.element.recorridoEntrada
-                    ? $0.element.recorridoEntrada < $1.element.recorridoEntrada
-                    : $0.offset < $1.offset
-            }
-            .prefix(maximo)
-            .map { $0.element }
-        let centros = Trazo.aEjesMoto(elegidos.map { $0.centro }, origen: origen, rumbo: sentido)
-        return zip(elegidos, centros).map { AnilloCruce(x: $0.1.x, y: $0.1.y, radio: $0.0.radio) }
+        anillosConIndices(de: anillos, ruta: ruta, sentido: sentido, ventana: ventana, maximo: maximo).anillos
+    }
+
+    /// Los mismos anillos que `anillos(de:ruta:sentido:ventana:maximo:)` y, en
+    /// el mismo orden, sus índices en `anillos`: las rotondas que van en el
+    /// mensaje, que son las que llevan las calles sin las del anillo
+    /// (RutaConCruces.crucesConAnillosSoloEn(_:)). Si hay más de `maximo` en la
+    /// ventana, las que no caben se dibujan con sus calles, sin anillo
+    /// (revisión de la 0.12.0).
+    public static func anillosConIndices(
+        de anillos: [Anillo],
+        ruta: [PuntoRuta],
+        sentido: Double,
+        ventana: ClosedRange<Double>,
+        maximo: Int = MensajeCruces.maximoAnillos
+    ) -> (anillos: [AnilloCruce], indices: [Int]) {
+        guard let origen = ruta.first, maximo > 0, !anillos.isEmpty else { return (anillos: [], indices: []) }
+        let enVentana: [Int] = anillos.indices.filter {
+            anillos[$0].recorridoEntrada <= ventana.upperBound
+                && anillos[$0].recorridoSalida >= ventana.lowerBound - metrosAnilloDetras
+        }
+        let ordenados: [Int] = enVentana.sorted {
+            anillos[$0].recorridoEntrada != anillos[$1].recorridoEntrada
+                ? anillos[$0].recorridoEntrada < anillos[$1].recorridoEntrada
+                : $0 < $1
+        }
+        let indices = Array(ordenados.prefix(maximo))
+        let centros = Trazo.aEjesMoto(indices.map { anillos[$0].centro }, origen: origen, rumbo: sentido)
+        let elegidos = zip(indices, centros).map { AnilloCruce(x: $0.1.x, y: $0.1.y, radio: anillos[$0.0].radio) }
+        return (anillos: elegidos, indices: indices)
     }
 
     /// Metros que sigue contando un anillo después de su salida, por detrás de

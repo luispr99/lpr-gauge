@@ -602,6 +602,40 @@ final.
     primero.
 - **Sin probar:** sin compilar en local (no hay Swift en Windows); las
   pruebas de `Core` corren en el CI. Sin probar en el iPhone ni en la moto.
+- **0.12.1, tres arreglos de una revisión de la 0.12.0** (2026-10-09; el
+  protocolo no cambia):
+  - **Regla 2 una vez por ruta.** En la 0.12.0 se aplicaba tramo a tramo,
+    después de quitar las calles que quedan detrás de la moto: al pasar la
+    moto el ancla de un grupo, el grupo se rehacía y calles que seguían por
+    delante aparecían y desaparecían (según la revisión, en las 3 rutas se
+    llegaban a ver 83, 90 y 77 calles distintas en vez de 78, 78 y 68). Ahora
+    se aplica al crear la ruta, por el recorrido de cada cruce (como el
+    estudio), a los cruces de los dos cuadros (en el de anillos, después de
+    las rotondas), y `Cruces.calles` solo elige y recorta. Los cruces sin
+    recorrido se quedan como están y ya no se juntan en ningún sitio: Valhalla
+    da `geometry_index` en las 840 intersecciones de las 6 respuestas del
+    estudio, y sin él el cruce ya escapa a la ventana. Comprobado con un port
+    a node de la lógica nueva y las 3 rutas: 78, 78 y 68 calles, y, con la
+    moto avanzando de 2 en 2 m, ninguna calle de delante aparece ni
+    desaparece.
+  - **Paso b de las rotondas, que faltaba.** En los cruces de una rotonda con
+    anillo, las calles de un mismo cruce a menos de 30° quedan en una, con el
+    rumbo medio, antes de buscar los brazos con isleta (como
+    `anillo/propuesta.js`). Por la que se puede entrar si se puede por
+    alguna; el estudio dejaba la de la primera (supuesto: en el único caso
+    real, las dos eran de entrar). En las 6 rutas solo junta una pareja:
+    Cuatro Caminos, 229° y 251° → 240°.
+  - **Sin anillo, con sus calles.** El mensaje lleva como mucho 4 anillos;
+    si hay más en la ventana, las rotondas que no caben se dibujaban sin
+    anillo y sin las calles del anillo. Ahora solo van sin ellas las rotondas
+    cuyo anillo va en el mensaje (`Cruces.anillosConIndices`); en las demás,
+    como para un cuadro sin anillos. Según la revisión, no pasa en 6 rutas
+    reales, pero es posible.
+    - La app guarda esos cruces mientras no cambian los anillos del mensaje.
+      Rehacerlos es poco: en el port a node, menos de 2 ms por ruta (la mayor,
+      316 calles); en el iPhone, sin medir.
+  - **Sin probar:** sin compilar en local; las pruebas nuevas corren en el
+    CI. Sin probar en el iPhone ni en la moto.
 
 ### 2026-10-09 · Navegación: servidores, buscador y Ferrostar
 

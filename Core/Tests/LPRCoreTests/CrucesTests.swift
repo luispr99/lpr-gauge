@@ -317,7 +317,13 @@ final class CrucesTests: XCTestCase {
         comprobar(Cruces.calles(de: cruces, ruta: rutaNorte, sentido: 0), [(0, 100, 64), (0, 100, 192)])
     }
 
-    // MARK: Regla 2: rayas dobles (0.12.0)
+    // MARK: Regla 2: rayas dobles (0.12.0; una vez por ruta desde la 0.12.1)
+
+    /// Los cruces de una ruta hacia el norte (`rutaNorte`, que empieza en la
+    /// moto) ya con la regla 2, como los da RutaConCruces.
+    private func conRegla2(_ cruces: [Cruce]) -> [Cruce] {
+        RutaConCruces(puntos: rutaNorte, cruces: cruces).cruces
+    }
 
     func testRayasDoblesSeQuedaLaDeEntrar() {
         // A 100 y 110 m, dos calles a la derecha casi paralelas (90° y 95°):
@@ -325,54 +331,105 @@ final class CrucesTests: XCTestCase {
         // izquierda, no es doble. La de 150 (92°) está a 50 m de la primera y a
         // 40 de la de 110: tampoco. 95° es 68/256 de vuelta (67,6); 92°, 65
         let cruces = [
-            Cruce(punto: punto(0, 100), rumbos: [90], entradas: [false]),
-            Cruce(punto: punto(0, 110), rumbos: [95], entradas: [true]),
-            Cruce(punto: punto(0, 120), rumbos: [270], entradas: [true]),
-            Cruce(punto: punto(0, 150), rumbos: [92], entradas: [false]),
+            Cruce(punto: punto(0, 100), rumbos: [90], recorrido: 100, entradas: [false]),
+            Cruce(punto: punto(0, 110), rumbos: [95], recorrido: 110, entradas: [true]),
+            Cruce(punto: punto(0, 120), rumbos: [270], recorrido: 120, entradas: [true]),
+            Cruce(punto: punto(0, 150), rumbos: [92], recorrido: 150, entradas: [false]),
         ]
-        comprobar(Cruces.calles(de: cruces, ruta: rutaNorte, sentido: 0),
+        let juntos = conRegla2(cruces)
+        // El de 100 se queda sin calles: fuera
+        XCTAssertEqual(juntos, [cruces[1], cruces[2], cruces[3]])
+        comprobar(Cruces.calles(de: juntos, ruta: rutaNorte, sentido: 0),
                   [(0, 110, 68), (0, 120, 192), (0, 150, 65)])
     }
 
     func testRayasDoblesSinEntradaSeQuedaLaPrimera() {
         // Sin ninguna por la que se pueda entrar (false o sin saber), la primera
         let cruces = [
-            Cruce(punto: punto(0, 100), rumbos: [90], entradas: [false]),
-            Cruce(punto: punto(0, 105), rumbos: [100]),
+            Cruce(punto: punto(0, 100), rumbos: [90], recorrido: 100, entradas: [false]),
+            Cruce(punto: punto(0, 105), rumbos: [100], recorrido: 105),
         ]
-        comprobar(Cruces.calles(de: cruces, ruta: rutaNorte, sentido: 0), [(0, 100, 64)])
+        XCTAssertEqual(conRegla2(cruces), [cruces[0]])
     }
 
     func testRayasDoblesEnElMismoCruce() {
-        // Dos calles del mismo cruce a 20°: una (la de entrar, 110°: 78/256).
-        // A 35°, las dos (125°: 89/256)
-        comprobar(Cruces.calles(de: [Cruce(punto: punto(0, 100), rumbos: [90, 110], entradas: [nil, true])],
-                                ruta: rutaNorte, sentido: 0),
-                  [(0, 100, 78)])
-        comprobar(Cruces.calles(de: [Cruce(punto: punto(0, 100), rumbos: [90, 125])], ruta: rutaNorte, sentido: 0),
-                  [(0, 100, 64), (0, 100, 89)])
+        // Dos calles del mismo cruce a 20°: una (la de entrar, 110°). A 35°,
+        // las dos
+        let juntas = conRegla2([Cruce(punto: punto(0, 100), rumbos: [90, 110], recorrido: 100,
+                                      entradas: [nil, true])])
+        XCTAssertEqual(juntas.map(\.rumbos), [[110]])
+        XCTAssertEqual(juntas.map(\.entradas), [[true]])
+        let separadas = [Cruce(punto: punto(0, 100), rumbos: [90, 125], recorrido: 100)]
+        XCTAssertEqual(conRegla2(separadas), separadas)
     }
 
     func testRayasDoblesAncladasEnLaPrimera() {
         // 90° a 100 m, 115° a 120 m y 140° a 140 m: la segunda va con la
         // primera (25°, 20 m), pero la tercera no (está a 40 m de la primera,
-        // aunque a 20 de la segunda): no se encadenan. 140° son 100/256 (99,6)
+        // aunque a 20 de la segunda): no se encadenan
         let cruces = [
-            Cruce(punto: punto(0, 100), rumbos: [90]),
-            Cruce(punto: punto(0, 120), rumbos: [115]),
-            Cruce(punto: punto(0, 140), rumbos: [140]),
+            Cruce(punto: punto(0, 100), rumbos: [90], recorrido: 100),
+            Cruce(punto: punto(0, 120), rumbos: [115], recorrido: 120),
+            Cruce(punto: punto(0, 140), rumbos: [140], recorrido: 140),
         ]
-        comprobar(Cruces.calles(de: cruces, ruta: rutaNorte, sentido: 0), [(0, 100, 64), (0, 140, 100)])
+        XCTAssertEqual(conRegla2(cruces), [cruces[0], cruces[2]])
     }
 
     func testRayasDoblesAntesDelMaximo() {
-        // Con 2 como máximo: la doble no gasta sitio
+        // Con 2 como máximo: la doble no gasta sitio (la regla 2 va antes, en
+        // la ruta). 92° es 65/256 de vuelta (65,4)
         let cruces = [
-            Cruce(punto: punto(0, 100), rumbos: [90], entradas: [false]),
-            Cruce(punto: punto(0, 105), rumbos: [92], entradas: [true]),
-            Cruce(punto: punto(0, 200), rumbos: [270]),
+            Cruce(punto: punto(0, 100), rumbos: [90], recorrido: 100, entradas: [false]),
+            Cruce(punto: punto(0, 105), rumbos: [92], recorrido: 105, entradas: [true]),
+            Cruce(punto: punto(0, 200), rumbos: [270], recorrido: 200),
         ]
-        comprobar(Cruces.calles(de: cruces, ruta: rutaNorte, sentido: 0, maximo: 2), [(0, 105, 65), (0, 200, 192)])
+        comprobar(Cruces.calles(de: conRegla2(cruces), ruta: rutaNorte, sentido: 0, maximo: 2),
+                  [(0, 105, 65), (0, 200, 192)])
+    }
+
+    func testRayasDoblesPorElRecorridoYSinElSeQuedan() {
+        // Por el recorrido de la ruta, no por el orden de la lista; los cruces
+        // sin recorrido no se tocan, y Cruces.calles ya no junta nada
+        let cruces = [
+            Cruce(punto: punto(0, 110), rumbos: [95], recorrido: 110, entradas: [true]),
+            Cruce(punto: punto(0, 100), rumbos: [90], recorrido: 100, entradas: [false]),
+            Cruce(punto: punto(0, 50), rumbos: [90]),
+            Cruce(punto: punto(0, 55), rumbos: [92]),
+        ]
+        XCTAssertEqual(Cruces.juntarDobles(en: cruces), [cruces[0], cruces[2], cruces[3]])
+        comprobar(Cruces.calles(de: [cruces[2], cruces[3]], ruta: rutaNorte, sentido: 0),
+                  [(0, 50, 64), (0, 55, 65)])
+    }
+
+    func testRayasDoblesNoCambianAlAvanzar() {
+        // 90° a 100 m (de entrar), 115° a 120 m y 140° a 140 m (sin entrada):
+        // con la regla 2 de la ruta entera se quedan la de 100 y la de 140 (la
+        // de 120 va con la de 100; la de 140, a 40 m de ella, no). Tramo a
+        // tramo (0.12.0), al pasar la moto la de 100 el grupo se rehacía con
+        // ancla en la de 120: aparecía la de 120 y desaparecía la de 140, que
+        // seguía por delante (revisión de la 0.12.0). Ahora la moto avanza de
+        // 5 en 5 m y las calles que quedan por delante son siempre las mismas.
+        // 140° es 100/256 de vuelta (99,6)
+        let cruces = [
+            Cruce(punto: punto(0, 100), rumbos: [90], recorrido: 100, entradas: [true]),
+            Cruce(punto: punto(0, 120), rumbos: [115], recorrido: 120, entradas: [false]),
+            Cruce(punto: punto(0, 140), rumbos: [140], recorrido: 140, entradas: [false]),
+        ]
+        let ruta = RutaConCruces(puntos: [punto(0, 0), punto(0, 500)], cruces: cruces)
+        XCTAssertEqual(ruta.cruces, [cruces[0], cruces[2]])
+        let delante: [(recorrido: Double, direccion: UInt8)] = [(100, 64), (140, 100)]
+        for moto in stride(from: 0.0, through: 135, by: 5) {
+            let tramo = [punto(0, moto), punto(0, moto + 300)]
+            let calles = Cruces.calles(de: ruta.cruces, ruta: tramo, sentido: 0,
+                                       ventana: max(0, moto - 50)...(moto + 300))
+            // Las de delante: a 1 m o más de la moto
+            let esperadas = delante
+                .filter { $0.recorrido - moto >= 1 }
+                .map { calle -> (x: Double, y: Double, direccion: UInt8) in
+                    (x: 0, y: calle.recorrido - moto, direccion: calle.direccion)
+                }
+            comprobar(calles, esperadas)
+        }
     }
 
     func testDiferenciaAngular() {

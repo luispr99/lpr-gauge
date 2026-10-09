@@ -48,7 +48,9 @@ public struct Cruce: Equatable {
 public struct RutaConCruces: Equatable {
     public var puntos: [PuntoRuta]
     /// Los cruces con calles laterales, en el orden de la ruta, para un cuadro
-    /// que no dibuja los anillos de las rotondas.
+    /// que no dibuja los anillos de las rotondas. Ya con la regla 2 de las
+    /// rayas dobles, aplicada una vez a la ruta entera (Cruces.juntarDobles(en:),
+    /// 0.12.1).
     public private(set) var cruces: [Cruce]
     /// Metros del trazado entero (los de `recorrido` de los cruces llegan
     /// hasta aquí).
@@ -62,19 +64,43 @@ public struct RutaConCruces: Equatable {
     /// Los anillos de las rotondas de la ruta que se han podido ajustar
     /// (Anillo.ajustar), en el orden de la ruta (v0.8).
     public private(set) var anillos: [Anillo]
-    /// Los cruces para un cuadro que dibuja los anillos (Capacidades.anillos):
-    /// en las rotondas con anillo, sin las calles que son el propio anillo y
-    /// con los brazos con isleta juntados (Cruces.conAnillos). Se calculan al
-    /// crear la ruta, una vez.
+    /// Los cruces para un cuadro que dibuja los anillos (Capacidades.anillos),
+    /// con todas las rotondas con anillo: en ellas, sin las calles que son el
+    /// propio anillo y con los brazos con isleta juntados (Cruces.conAnillos);
+    /// y después, la regla 2, como en `cruces`. Se calculan al crear la ruta,
+    /// una vez. Para el mensaje, `crucesConAnillosSoloEn(_:)`.
     public private(set) var crucesConAnillos: [Cruce]
+    /// Los cruces como llegan (con la regla 1, sin la 2), para rehacer los de
+    /// un cuadro con anillos con solo algunas rotondas.
+    private var crucesSinJuntar: [Cruce]
 
     public init(puntos: [PuntoRuta], cruces: [Cruce], vias: [String] = [], anillos: [Anillo] = []) {
         self.puntos = puntos
-        self.cruces = cruces
+        self.crucesSinJuntar = cruces
+        self.cruces = Cruces.juntarDobles(en: cruces)
         self.longitud = RespuestaOSRM.recorridos(puntos).last ?? 0
         self.vias = vias
         self.anillos = anillos
-        self.crucesConAnillos = Cruces.conAnillos(cruces, anillos: anillos)
+        // La regla 2 después de las rotondas: las calles del anillo ya no
+        // cuentan y la del brazo con isleta, sí (como en el estudio)
+        self.crucesConAnillos = Cruces.juntarDobles(en: Cruces.conAnillos(cruces, anillos: anillos))
+    }
+
+    /// Los cruces para un cuadro que dibuja los anillos, sin las calles del
+    /// anillo solo en las rotondas `indices` (en `anillos`): las de los anillos
+    /// que van en el mensaje (Cruces.anillosConIndices). En las demás, como en
+    /// `cruces`: el cuadro no dibuja su anillo y sus calles lo dibujan (si hay
+    /// más anillos en el tramo de los que caben; revisión de la 0.12.0). Los
+    /// índices que no están en `anillos` no cuentan. Con todas, es
+    /// `crucesConAnillos`; sin ninguna, `cruces`. Si no, se calcula (conAnillos
+    /// de esas rotondas y la regla 2 de la ruta entera): cuesta poco más que
+    /// ordenar las calles de la ruta, unos cientos o pocos miles, y la app lo
+    /// guarda mientras no cambian los anillos del mensaje.
+    public func crucesConAnillosSoloEn(_ indices: [Int]) -> [Cruce] {
+        let elegidos = Set(indices.filter { anillos.indices.contains($0) })
+        if elegidos.isEmpty { return cruces }
+        if elegidos.count == anillos.count { return crucesConAnillos }
+        return Cruces.juntarDobles(en: Cruces.conAnillos(crucesSinJuntar, anillos: anillos, soloEn: elegidos))
     }
 }
 
@@ -268,7 +294,8 @@ public enum Cruces {
 
     /// Regla 2 de las rayas dobles (v0.12.0): de cada grupo de calles casi
     /// paralelas, a estos metros o menos a lo largo de la ruta y a estos grados
-    /// o menos de rumbo, se queda una (`juntarDobles`). Son la otra calzada de
+    /// o menos de rumbo, se queda una (`juntarDobles(en:)`, una vez por ruta
+    /// desde la 0.12.1). Son la otra calzada de
     /// las avenidas, las aceras y los carriles bici que Valhalla da como calles
     /// aparte. Supuestos, sacados de 3 rutas reales (Madrid y Segovia,
     /// 2026-10-09): con las reglas 1 y 2, de 151, 142 y 122 calles se pasa a
@@ -295,9 +322,11 @@ public enum Cruces {
     /// `tolerancia` metros de `ruta`, la del tramo sin simplificar, que empieza
     /// en la moto), en los ejes de la moto (el origen en el primer punto de
     /// `ruta` y `sentido` hacia arriba, como TRAZO). Los cruces más cercanos a
-    /// la moto, a lo largo de la ruta, primero; de las calles casi paralelas y
-    /// cercanas, una (regla 2, `juntarDobles`); y después, como mucho `maximo`
-    /// calles.
+    /// la moto, a lo largo de la ruta, primero, y como mucho `maximo` calles.
+    /// Solo elige y recorta: la regla 2 ya va en los cruces de la ruta
+    /// (RutaConCruces). Aquí, tramo a tramo, al pasar la moto el ancla de un
+    /// grupo el grupo se rehacía y aparecían y desaparecían calles que seguían
+    /// por delante (revisión de la 0.12.0).
     /// `ventana`: los metros de la ruta entera que cubre el tramo, desde la moto
     /// (Cruce.recorrido); un cruce con recorrido fuera de ella no cuenta, aunque
     /// caiga cerca del tramo (otra pasada por la misma calle o un cruce ya
@@ -365,23 +394,72 @@ public enum Cruces {
         }
         encontrados.sort { $0.recorrido != $1.recorrido ? $0.recorrido < $1.recorrido : $0.orden < $1.orden }
 
-        // Todas las calles de esos cruces, en ese orden
-        var laterales: [LateralEnRuta] = []
+        // Las calles de esos cruces, en ese orden, hasta el máximo
         var calles: [CalleCruce] = []
-        for encontrado in encontrados {
+        for encontrado in encontrados where calles.count < maximo {
             let cruce = cruces[encontrado.orden]
             guard let enEjes = Trazo.aEjesMoto([cruce.punto], origen: origen, rumbo: sentido).first else { continue }
-            for (indice, rumbo) in cruce.rumbos.enumerated() {
-                laterales.append(LateralEnRuta(donde: encontrado.recorrido, rumbo: rumbo, entrada: cruce.entrada(indice)))
+            for rumbo in cruce.rumbos where calles.count < maximo {
                 calles.append(CalleCruce(x: enEjes.x, y: enEjes.y, direccion: direccion(rumbo: rumbo, sentido: sentido)))
             }
         }
-        // Regla 2 antes de recortar: así no se gasta sitio en rayas dobles
-        return juntarDobles(laterales).prefix(maximo).map { calles[$0] }
+        return calles
     }
 
-    /// Una calle de un cruce del tramo, para la regla 2: los metros por la ruta
-    /// desde la moto hasta su cruce, su rumbo y si se puede entrar por ella.
+    /// Regla 2 de las rayas dobles para la ruta entera (`juntarDobles`), por
+    /// Cruce.recorrido (como la función `juntar` del estudio, que la aplica a
+    /// la ruta entera): así cada grupo es siempre el mismo, vaya la moto por
+    /// donde vaya. A igual recorrido, en el orden de `cruces`. Los cruces que
+    /// se quedan sin calles se quitan; los que no tienen recorrido se quedan
+    /// como están (Valhalla da `geometry_index` en las 840 intersecciones de 6
+    /// respuestas reales, comprobado el 2026-10-09). El orden no cambia.
+    public static func juntarDobles(en cruces: [Cruce]) -> [Cruce] {
+        // Los cruces con recorrido, por él
+        var conRecorrido: [(recorrido: Double, cruce: Int)] = []
+        for (c, cruce) in cruces.enumerated() {
+            if let recorrido = cruce.recorrido, recorrido.isFinite {
+                conRecorrido.append((recorrido: recorrido, cruce: c))
+            }
+        }
+        conRecorrido.sort { $0.recorrido != $1.recorrido ? $0.recorrido < $1.recorrido : $0.cruce < $1.cruce }
+
+        // Sus calles, en ese orden, y de qué cruce y calle es cada una
+        var laterales: [LateralEnRuta] = []
+        var origenes: [(cruce: Int, calle: Int)] = []
+        for elemento in conRecorrido {
+            let cruce = cruces[elemento.cruce]
+            for (k, rumbo) in cruce.rumbos.enumerated() {
+                laterales.append(LateralEnRuta(donde: elemento.recorrido, rumbo: rumbo, entrada: cruce.entrada(k)))
+                origenes.append((cruce: elemento.cruce, calle: k))
+            }
+        }
+        var quedan = [Bool](repeating: false, count: laterales.count)
+        for i in juntarDobles(laterales) {
+            quedan[i] = true
+        }
+        var fuera = [Set<Int>](repeating: [], count: cruces.count)
+        for (i, origen) in origenes.enumerated() where !quedan[i] {
+            fuera[origen.cruce].insert(origen.calle)
+        }
+
+        var resultado: [Cruce] = []
+        for (c, cruce) in cruces.enumerated() {
+            if fuera[c].isEmpty {
+                resultado.append(cruce)
+                continue
+            }
+            let calles = cruce.rumbos.indices.filter { !fuera[c].contains($0) }
+            if calles.isEmpty { continue }
+            var copia = cruce
+            copia.rumbos = calles.map { cruce.rumbos[$0] }
+            copia.entradas = calles.map { cruce.entrada($0) }
+            resultado.append(copia)
+        }
+        return resultado
+    }
+
+    /// Una calle de un cruce, para la regla 2: los metros por la ruta hasta su
+    /// cruce, su rumbo y si se puede entrar por ella.
     struct LateralEnRuta: Equatable {
         var donde: Double
         var rumbo: Double

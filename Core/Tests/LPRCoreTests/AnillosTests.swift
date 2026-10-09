@@ -177,10 +177,64 @@ final class AnillosTests: XCTestCase {
             return copia
         }
         XCTAssertEqual(Cruces.conAnillos(otroIndice, anillos: [anillo]), otroIndice)
-        // RutaConCruces los calcula al crearse
+        // RutaConCruces los calcula al crearse, con la regla 2 después: en
+        // `cruces`, la calzada de llegada del brazo (100°, sin entrada, a 10 m
+        // y 20° de la de salida) va con la de salida (80°, de entrar)
         let ruta = RutaConCruces(puntos: [punto(0, -100), punto(0, 100)], cruces: cruces, anillos: [anillo])
-        XCTAssertEqual(ruta.cruces, cruces)
-        XCTAssertEqual(ruta.crucesConAnillos, Cruces.conAnillos(cruces, anillos: [anillo]))
+        XCTAssertEqual(ruta.cruces, [cruces[0], cruces[1], cruces[3], cruces[4], cruces[5]])
+        XCTAssertEqual(ruta.cruces, Cruces.juntarDobles(en: cruces))
+        XCTAssertEqual(ruta.crucesConAnillos, Cruces.juntarDobles(en: Cruces.conAnillos(cruces, anillos: [anillo])))
+        XCTAssertEqual(ruta.crucesConAnillos.count, 3)
+    }
+
+    // MARK: Paso b: calles de un mismo cruce de la rotonda (0.12.1)
+
+    func testCallesDeUnMismoCruceDeLaRotondaEnUna() throws {
+        // Como en Cuatro Caminos: un cruce al suroeste del anillo (la radial
+        // hacia fuera, a 240°) con dos calles a 229° y 251°: una, a 240°. Por
+        // la que se puede entrar si se puede por alguna
+        let angulo = 210.0 * Double.pi / 180
+        let suroeste = punto(20 * cos(angulo), 20 * sin(angulo))
+        let casos: [(entradas: [Bool?], esperada: Bool)] = [
+            ([true, true], true), ([false, true], true), ([false, false], false),
+        ]
+        for caso in casos {
+            let cruces = [Cruce(punto: suroeste, rumbos: [229, 251], recorrido: 100, entradas: caso.entradas,
+                                anillo: 0)]
+            let conAnillos = Cruces.conAnillos(cruces, anillos: [anillo])
+            XCTAssertEqual(conAnillos.count, 1)
+            let cruce = try XCTUnwrap(conAnillos.first)
+            XCTAssertEqual(cruce.rumbos.count, 1)
+            XCTAssertEqual(try XCTUnwrap(cruce.rumbos.first), 240, accuracy: 1e-6)
+            XCTAssertEqual(cruce.entradas, [caso.esperada])
+            XCTAssertEqual(cruce.recorrido, 100)
+        }
+        // A 30° o más, las dos
+        let separadas = [Cruce(punto: suroeste, rumbos: [225, 255], recorrido: 100, entradas: [true, true], anillo: 0)]
+        XCTAssertEqual(Cruces.conAnillos(separadas, anillos: [anillo]), separadas)
+    }
+
+    func testCallesDeUnMismoCruceAntesDeLosBrazos() throws {
+        // Al este, un cruce con dos calles de salida (80° y 95°) y, 20° más
+        // allá, la calzada de llegada del brazo (100°, sin entrada). Juntas
+        // las dos primeras (87,5°), con la de llegada son un brazo con
+        // isleta: una sola calle, en el anillo a medio camino (al este) y con
+        // el rumbo medio (93,75°). Sin el paso b, la de 80° se quedaba sola
+        func enAnillo(_ grados: Double) -> PuntoRuta {
+            punto(20 * cos(grados * .pi / 180), 20 * sin(grados * .pi / 180))
+        }
+        let cruces = [
+            Cruce(punto: enAnillo(-10), rumbos: [80, 95], recorrido: 110, entradas: [true, true], anillo: 0),
+            Cruce(punto: enAnillo(10), rumbos: [100], recorrido: 120, entradas: [false], anillo: 0),
+        ]
+        let conAnillos = Cruces.conAnillos(cruces, anillos: [anillo])
+        XCTAssertEqual(conAnillos.count, 1)
+        let brazo = try XCTUnwrap(conAnillos.first)
+        XCTAssertEqual(Trazo.distancia(brazo.punto, punto(20, 0)), 0, accuracy: 0.01)
+        XCTAssertEqual(brazo.rumbos.count, 1)
+        XCTAssertEqual(try XCTUnwrap(brazo.rumbos.first), 93.75, accuracy: 1e-6)
+        XCTAssertEqual(brazo.entradas, [true])
+        XCTAssertEqual(brazo.recorrido, 110)
     }
 
     func testRumboMedio() {
@@ -240,5 +294,48 @@ final class AnillosTests: XCTestCase {
                        [51])
         XCTAssertEqual(Cruces.anillos(de: anillos, ruta: [], sentido: 0, ventana: 500...800), [])
         XCTAssertEqual(Cruces.anillos(de: [], ruta: ruta, sentido: 0, ventana: 500...800), [])
+        // Y cuáles son, en el mismo orden
+        let elegidos = Cruces.anillosConIndices(de: anillos, ruta: ruta, sentido: 0, ventana: 500...800)
+        XCTAssertEqual(elegidos.indices, [4, 3, 1, 2])
+        XCTAssertEqual(elegidos.anillos.map(\.radio), [51, 52, 60, 65])
+        XCTAssertEqual(Cruces.anillosConIndices(de: anillos, ruta: [], sentido: 0, ventana: 500...800).indices, [])
+    }
+
+    func testSinAnilloLasRotondasQueNoCaben() {
+        // Cinco rotondas de 20 m hacia el norte, cada 100 m, todas en la
+        // ventana. En cada una, un cruce al este con un brazo (90°) y el
+        // anillo (190°, a 100° de la radial). Van 4 anillos en el mensaje: en
+        // esas 4 rotondas, sin la calle del anillo; en la quinta, que se
+        // dibuja sin anillo, con ella (revisión de la 0.12.0)
+        let anillos = (0..<5).map { k -> Anillo in
+            let y = 100 + 100 * Double(k)
+            return Anillo(centro: punto(0, y), radio: 20, recorridoEntrada: y - 20, recorridoSalida: y + 20)
+        }
+        let cruces = (0..<5).map { k -> Cruce in
+            let y = 100 + 100 * Double(k)
+            return Cruce(punto: punto(20, y), rumbos: [90, 190], recorrido: y, entradas: [true, true], anillo: k)
+        }
+        // El tramo, hacia el norte por los cruces
+        let tramo = [punto(20, 0), punto(20, 600)]
+        let ruta = RutaConCruces(puntos: tramo, cruces: cruces, anillos: anillos)
+        let elegidos = Cruces.anillosConIndices(de: ruta.anillos, ruta: tramo, sentido: 0, ventana: 0...600)
+        XCTAssertEqual(elegidos.anillos.count, 4)
+        XCTAssertEqual(elegidos.indices, [0, 1, 2, 3])
+        XCTAssertEqual(ruta.crucesConAnillosSoloEn(elegidos.indices).map(\.rumbos),
+                       [[90], [90], [90], [90], [90, 190]])
+        // En el cuadro: 4 calles del brazo y, de la quinta, el brazo y el
+        // anillo (190° respecto al norte: 135/256 de vuelta, 135,1)
+        let calles = Cruces.calles(de: ruta.crucesConAnillosSoloEn(elegidos.indices), ruta: tramo, sentido: 0)
+        XCTAssertEqual(calles.map(\.direccion), [64, 64, 64, 64, 64, 135])
+        // Con todas, como crucesConAnillos; sin ninguna (o con índices que no
+        // están), como cruces
+        XCTAssertEqual(ruta.crucesConAnillos.map(\.rumbos), [[90], [90], [90], [90], [90]])
+        XCTAssertEqual(ruta.crucesConAnillosSoloEn([4, 3, 2, 1, 0]), ruta.crucesConAnillos)
+        XCTAssertEqual(ruta.cruces, cruces)
+        XCTAssertEqual(ruta.crucesConAnillosSoloEn([]), ruta.cruces)
+        XCTAssertEqual(ruta.crucesConAnillosSoloEn([7]), ruta.cruces)
+        // Con otras, las suyas
+        XCTAssertEqual(ruta.crucesConAnillosSoloEn([1, 4]).map(\.rumbos),
+                       [[90, 190], [90], [90, 190], [90, 190], [90]])
     }
 }
