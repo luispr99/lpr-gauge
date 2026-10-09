@@ -1,4 +1,4 @@
-// Codificación y decodificación de los mensajes (docs/PROTOCOLO.md, v0.9).
+// Codificación y decodificación de los mensajes (docs/PROTOCOLO.md, v0.10).
 // Reglas comunes (sección 3): little-endian, primer byte = versión, campos
 // nuevos al final; el receptor ignora los bytes que sobran y descarta los
 // mensajes cortos o con una versión que no conoce.
@@ -57,6 +57,14 @@ func leerU32(_ bytes: [UInt8], _ i: Int) -> UInt32 {
 func u32Saturado(_ valor: Double) -> UInt32 {
     guard valor.isFinite else { return 0 }
     return UInt32(min(4_294_967_295, max(0, valor.rounded())))
+}
+
+/// Un valor sin signo en u32 con valor de desconocido (el resumen del viaje
+/// de NAV, v0.10): redondeado y saturado entre 0 y 4 294 967 294; sin dato o
+/// no finito, `0xFFFFFFFF` (desconocido).
+func u32Desconocido(_ valor: Double?) -> UInt32 {
+    guard let valor, valor.isFinite else { return 0xFFFF_FFFF }
+    return UInt32(min(4_294_967_294, max(0, valor.rounded())))
 }
 
 /// Metros como i16 (TRAZO y CRUCES): redondeados al metro y saturados en
@@ -123,6 +131,9 @@ public struct MensajeNav: Equatable {
     public static let longitudMinima = 9
     /// Con los campos de la v0.6: si el mensaje es más corto, son desconocidos.
     public static let longitud = 17
+    /// Con el resumen del viaje (v0.10): si el mensaje es más corto, el tiempo
+    /// de viaje y la distancia recorrida son desconocidos.
+    public static let longitudConResumen = 25
 
     public var secuencia: UInt8
     public var banderas: BanderasNav
@@ -141,6 +152,10 @@ public struct MensajeNav: Equatable {
     public var horaLlegada: Int?
     /// Metros del paso actual entero, de la maniobra anterior a la siguiente.
     public var longitudPaso: Double?
+    /// Segundos desde que se inició la ruta, paradas incluidas (v0.10).
+    public var tiempoViaje: Double?
+    /// Metros recorridos desde que se inició la ruta, por el GPS (v0.10).
+    public var distanciaRecorrida: Double?
 
     public init(
         secuencia: UInt8,
@@ -152,7 +167,9 @@ public struct MensajeNav: Equatable {
         distanciaRestante: Double? = nil,
         tiempoRestante: Double? = nil,
         horaLlegada: Int? = nil,
-        longitudPaso: Double? = nil
+        longitudPaso: Double? = nil,
+        tiempoViaje: Double? = nil,
+        distanciaRecorrida: Double? = nil
     ) {
         self.secuencia = secuencia
         self.banderas = banderas
@@ -164,12 +181,17 @@ public struct MensajeNav: Equatable {
         self.tiempoRestante = tiempoRestante
         self.horaLlegada = horaLlegada
         self.longitudPaso = longitudPaso
+        self.tiempoViaje = tiempoViaje
+        self.distanciaRecorrida = distanciaRecorrida
     }
 
-    /// Siempre los 17 bytes de la v0.6. Las distancias y el tiempo se redondean
-    /// y se saturan en 65 534; el ángulo, en ±180; una hora de llegada fuera
-    /// de 0-1439 va como desconocida.
-    public func codificar() -> [UInt8] {
+    /// Los 25 bytes de la v0.10 o, si `maximo` (lo que admite la conexión) no
+    /// llega a 25, los 17 de la v0.6, sin el resumen del viaje (§2). Las
+    /// distancias y el tiempo restante se redondean y se saturan en 65 534; el
+    /// ángulo, en ±180; una hora de llegada fuera de 0-1439 va como
+    /// desconocida; el tiempo de viaje y la distancia recorrida se redondean
+    /// y se saturan en 4 294 967 294.
+    public func codificar(maximo: Int = longitudConResumen) -> [UInt8] {
         var bytes: [UInt8] = [Protocolo.version, secuencia, banderas.rawValue, maniobra.rawValue, modificador]
         bytes.anadirU16(u16Saturado(distancia))
         bytes.anadirU16(angulo.map { UInt16(bitPattern: Int16(min(180, max(-180, $0)))) } ?? 0x7FFF)
@@ -179,6 +201,10 @@ public struct MensajeNav: Equatable {
             (0...1439).contains(hora) ? UInt16(hora) : nil
         } ?? 0xFFFF)
         bytes.anadirU16(u16Saturado(longitudPaso))
+        if maximo >= Self.longitudConResumen {
+            bytes.anadirU32(u32Desconocido(tiempoViaje))
+            bytes.anadirU32(u32Desconocido(distanciaRecorrida))
+        }
         return bytes
     }
 
@@ -206,6 +232,14 @@ public struct MensajeNav: Equatable {
             let hora = leerU16(bytes, 13)
             mensaje.horaLlegada = hora <= 1439 ? Int(hora) : nil
             mensaje.longitudPaso = valor(15)
+        }
+        if bytes.count >= longitudConResumen {
+            func valor32(_ i: Int) -> Double? {
+                let crudo = leerU32(bytes, i)
+                return crudo == 0xFFFF_FFFF ? nil : Double(crudo)
+            }
+            mensaje.tiempoViaje = valor32(17)
+            mensaje.distanciaRecorrida = valor32(21)
         }
         return mensaje
     }

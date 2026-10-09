@@ -697,6 +697,88 @@ final.
 - **Cuadro:** se hace en su proyecto (el código no entra en este
   repositorio).
 
+### 2026-10-09 · Solo carreteras en los cruces y resumen del viaje (0.14.0)
+
+- **Peticiones del autor (protocolo v0.10, `PROTOCOLO.md` §5, §7 quater y
+  §13):** en la cara de navegación, «solo quiero carreteras»; y, al terminar
+  la ruta, el tiempo de trayecto, los km totales y la velocidad media.
+- **Solo carreteras en `CRUCES`.** La app ya pedía `/trace_attributes` de
+  cada ruta propuesta para los km de autopista, peaje y tierra. Ahora la
+  misma petición trae también el índice del trazado en que acaba cada arista
+  (`edge.end_shape_index`) y, de su nodo final, el rumbo y el uso de las
+  aristas que lo cruzan (`node.intersecting_edge.begin_heading` y `.use`).
+  - Cada calle lateral de un cruce se casa con la arista del mismo nodo (el
+    del `geometry_index` del cruce) de rumbo más parecido, si está a 4° o
+    menos (como en el estudio de las rayas dobles). Se quedan las de `use`
+    road, ramp, turn_channel, living_street, service_road y culdesac; fuera,
+    garajes, pasillos de aparcamiento, callejones, pistas, caminos, carriles
+    bici, aceras, pasos de peatones, escaleras y similares. Una calle que no
+    casa con ninguna arista, o que casa con una sin uso, se queda; sin
+    atributos, todo como en la 0.13.0.
+  - El filtro va antes de las reglas 1 y 2 y de las rotondas. Para eso la
+    regla 1 pasa de la lectura de la respuesta a `RutaConCruces` (con los
+    mismos cruces de entrada, el resultado sin atributos es el mismo): así,
+    de una calle de un sentido que llega a la ruta junto a una acera, las
+    dos sin entrada, queda la calle en vez de ninguna.
+  - Contado el 2026-10-09 con las 3 rutas del estudio (un port a node, en el
+    directorio temporal; los datos de OpenStreetMap no entran en el
+    repositorio): todas las calles laterales casan con una arista (142, 151 y
+    122). Con el filtro y las reglas 1 y 2 quedan 76, 72 y 57 calles (con
+    solo las reglas, 78, 78 y 68), todas de carretera; sin el filtro se
+    colaban aceras, pasos de peatones, garajes, pasillos de aparcamiento,
+    callejones y pistas.
+  - **Cuándo.** Al empezar, con los atributos de la ruta propuesta del mismo
+    trazado (mismo número de puntos, todos a menos de 1 m); si aún no han
+    llegado, al llegar. Tras un recálculo (una ruta de Ferrostar que no es
+    ninguna de las propuestas), la app pide `/trace_attributes` de la ruta
+    nueva, con el mismo cliente y respetando el ritmo del servidor, y aplica
+    el filtro cuando llega. Una sola petición por ruta: si falla, no se
+    repite, y si falló la de la ruta propuesta, tampoco se pide otra. Hasta
+    entonces, los cruces van como en la 0.13.0.
+  - **Comprobación de los índices (supuesto).** Con `walk_or_snap`, si el
+    recorrido de las aristas falla y Valhalla ajusta la forma al mapa, los
+    índices serían de otra forma. La app solo aplica el filtro si la última
+    arista acaba en el último punto del trazado (pasa en las 3 rutas del
+    estudio); si no, los cruces se quedan como están.
+  - Si dos aristas de la ruta acaban en el mismo índice (una de longitud 0),
+    cuentan las aristas que cruzan de las dos (supuesto; en el estudio no
+    pasa: el estudio se quedaba con las de la última).
+  - Para el filtro no hace falta nada en el cuadro.
+- **Resumen del viaje en `NAV`.** `NAV` pasa de 17 a 25 bytes: el tiempo de
+  viaje en segundos y la distancia recorrida en metros (`u32`,
+  `FF FF FF FF` si no se saben), en todos los `NAV` con ruta, también al
+  llegar.
+  - El tiempo cuenta desde «Iniciar», paradas incluidas; la distancia suma
+    las posiciones del GPS consecutivas con una precisión horizontal de 50 m
+    o menos, descartando los saltos imposibles (más de 70 m/s desde la última
+    posición que contó, o en otro sitio en el mismo instante): la posición
+    descartada no cuenta y la siguiente se mide desde la última buena. Los
+    recálculos no lo reinician. Con la simulación, la distancia sale de las
+    posiciones del simulador (las que ve Ferrostar), con la hora de cada
+    estado; el GPS de verdad, en cambio, no se mueve.
+  - Al llegar, el tiempo y la distancia se paran (decisión de la
+    implementación: es el resumen del trayecto, no sigue contando mientras
+    no se pulsa «Terminar»).
+  - Si la conexión no admite 25 bytes, `NAV` sale con los 17 de la v0.6
+    (`PROTOCOLO.md` §2). Para no mandar `NAV` cada segundo por el tiempo de
+    viaje, que cambia cada segundo, el cambio se mira sin el resumen: el
+    resumen va con la repetición (cada 1,5-2 s) y, al llegar, con el cambio
+    de las banderas.
+  - En la app, al llegar, la fila de abajo del guiado enseña «Recorrido»,
+    «Tiempo» y «Media» (km/h) en vez de lo que queda y la altitud.
+  - **El cuadro necesita un firmware que lea los campos de la v0.10 para
+    enseñar el resumen.** Uno anterior los ignora (§3), siempre que acepte
+    una escritura de 25 bytes en `NAV`: hasta la v0.9 la tabla de §2 decía
+    20 bytes como máximo; sin comprobar en el cuadro.
+- **Riesgos sin medir:** parado, el ruido del GPS suma metros (no se filtra
+  más que por la precisión; Core Location sin `distanceFilter`); los
+  umbrales de 50 m y 70 m/s son supuestos.
+- **Sin probar:** sin compilar en local (no hay Swift en Windows); las
+  pruebas de `Core` corren en el CI. Sin probar en el iPhone ni en la moto,
+  sin una petición real con los atributos nuevos desde la app (sí con el
+  estudio, que pedía los mismos y más) y sin un cuadro con el firmware
+  nuevo.
+
 ### 2026-10-09 · Navegación: servidores, buscador y Ferrostar
 
 - **Origen:** el autor propuso usar lo mismo que la web

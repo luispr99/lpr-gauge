@@ -88,13 +88,15 @@ enum ClienteValhalla {
 
     /// Km de autopista, peaje y sin asfaltar de una ruta, tramo a tramo
     /// (/trace_attributes, en el mismo servidor que /route; LPRCore,
-    /// Atributos.swift). Los de las maniobras se pasaban (0.10.0).
-    static func detalleVias(_ puntos: [PuntoRuta]) async throws -> DetalleVias {
+    /// Atributos.swift). Los de las maniobras se pasaban (0.10.0). Desde la
+    /// 0.14.0, en la misma petición, las aristas que cruzan cada nodo, para
+    /// mandar en CRUCES solo las calles de carretera (v0.10).
+    static func atributosVias(_ puntos: [PuntoRuta]) async throws -> AtributosRuta {
         guard let base = URL(string: Servidores.rutas) else { throw Fallo.peticionNoValida }
         let direccion = base.deletingLastPathComponent().appendingPathComponent("trace_attributes")
         let cuerpo = try JSONSerialization.data(withJSONObject: RespuestaAtributos.cuerpo(forma: puntos))
         let datos = try await enviar(direccion, ["Content-Type": "application/json"], cuerpo)
-        return try RespuestaAtributos.detalle(de: datos)
+        return try RespuestaAtributos.leer(datos)
     }
 
     private static func partes(_ peticion: RouteRequest) throws -> (URL, [String: String], Data) {

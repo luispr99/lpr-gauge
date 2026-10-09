@@ -1,6 +1,6 @@
 # Protocolo BLE móvil → cuadro
 
-> **Estado: borrador v0.9 (2026-10-09), sin validar.** Los puntos marcados
+> **Estado: borrador v0.10 (2026-10-09), sin validar.** Los puntos marcados
 > **[PENDIENTE]** faltan por completar. Mientras sea borrador, nada de lo que hay
 > aquí es definitivo y puede cambiar sin mantener compatibilidad. Los cambios de
 > cada versión están en la [sección 13](#13-cambios).
@@ -56,7 +56,9 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
 - **Mensajes de 20 bytes como máximo:** caben con el MTU mínimo (23). Aun así, la
   app consulta `maximumWriteValueLength(for:)` en tiempo de ejecución. Las
   excepciones son `NAV_TEXT` (sección 7 bis), `TRAZO` (sección 7 ter) y
-  `CRUCES` (sección 7 quater), que se ajustan al MTU de la conexión.
+  `CRUCES` (sección 7 quater), que se ajustan al MTU de la conexión, y `NAV`
+  desde la v0.10 (25 bytes con el resumen del viaje): si la conexión no admite
+  25 bytes, la app lo manda sin los campos de la v0.10 (17 bytes).
 
 ## 3. Reglas comunes de codificación
 
@@ -101,9 +103,18 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
 | 11-12 | tiempo restante | u16 | `0xFFFF` | Hasta el destino, en minutos, redondeado (v0.6). |
 | 13-14 | llegada | u16 | `0xFFFF` | Hora de llegada prevista, en minutos desde la medianoche, con la hora local del móvil: 0-1439 (v0.6). |
 | 15-16 | longitud del paso | u16 | `0xFFFF` | Metros del paso actual entero, de la maniobra anterior a la siguiente; satura en 65 534 (v0.6). Con la distancia, da el avance hacia la maniobra. |
+| 17-20 | tiempo de viaje | u32 | `0xFFFFFFFF` | Segundos desde que se inició la ruta, paradas incluidas; los recálculos no lo reinician (v0.10). |
+| 21-24 | distancia recorrida | u32 | `0xFFFFFFFF` | Metros recorridos desde que se inició la ruta, sumando las posiciones del GPS (v0.10). |
 
 - Longitud mínima: 9 bytes. Los campos de la v0.6 están si el mensaje tiene 17
-  bytes o más; si no, son desconocidos.
+  bytes o más; los de la v0.10, si tiene 25 o más; si no, son desconocidos.
+- **Resumen del viaje (v0.10, a petición del autor el 2026-10-09: «Cuando
+  termina la ruta estaría bien que saliesen datos como tiempo de trayecto,
+  kilometros totales y velocidad media»):** la app manda el tiempo de viaje y
+  la distancia recorrida en todos los `NAV` con ruta. Al llegar (bit 3), el
+  cuadro los enseña con la velocidad media (distancia entre tiempo). La
+  distancia es la del GPS, no la de la ruta, así que cuenta los desvíos. Un
+  dispositivo anterior a la v0.10 los ignora (sección 3).
 - Sin ruta activa, la app manda `NAV` con el bit 0 a cero y el cuadro deja de
   mostrar la flecha.
 - **Al llegar** (v0.6, a petición del autor: la bandera al terminar), la app
@@ -324,6 +335,14 @@ formato de arriba.
     ruta y a 30° o menos de rumbo) manda una: la primera por la que se puede
     entrar o, si no hay, la primera. Antes de recortar por tamaño.
   - Los umbrales son supuestos, sacados de 3 rutas reales (docs/DECISIONES.md).
+- **Solo carreteras (v0.10, a petición del autor: «solo quiero
+  carreteras»):** con los atributos de `/trace_attributes` de la ruta (el
+  `use` de cada arista que cruza, casada con la calle por el nodo y el rumbo),
+  la app quita las calles de garajes, pasillos de aparcamiento, callejones,
+  pistas, caminos, carriles bici, aceras, escaleras y similares; se quedan las
+  de `use` road, ramp, turn_channel, living_street, service_road y culdesac.
+  Mientras no hay atributos (al empezar o tras un recálculo, hasta que
+  llegan), se mandan como antes.
 - **Anillos de las rotondas (v0.8):** en la respuesta solo viene el arco de la
   rotonda que recorre la ruta (del primer cruce del paso de la rotonda,
   `roundabout` o `rotary`, al primero del paso siguiente). La app le ajusta
@@ -447,6 +466,10 @@ la da el ángulo de `NAV` (sección 5). Ya no se intenta seguir los códigos
 
 ## 13. Cambios
 
+- **v0.10 (2026-10-09):** `NAV` con el tiempo de viaje y la distancia
+  recorrida (sección 5), para el resumen al llegar. En `CRUCES`, la app solo
+  manda calles de carretera (sección 7 quater). La versión del formato sigue
+  siendo 1.
 - **v0.9 (2026-10-09):** `TRAZO` con movimiento (sección 7 ter, bit 10 de
   capacidades): recorrido de la moto en la ruta, puntos de detrás y 100 m más
   de tramo, para que el dispositivo mueva el dibujo él solo entre mensajes y

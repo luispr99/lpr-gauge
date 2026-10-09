@@ -18,6 +18,9 @@ private struct BotonOcultarTeclado: ViewModifier {
                     Label("Ocultar teclado", systemImage: "keyboard.chevron.compact.down")
                         .labelStyle(.titleAndIcon)
                 }
+                // Un poco más arriba: pegado al teclado quedaba muy justo
+                // (lo pidió el autor el 2026-10-09). Sin probar en el iPhone
+                .padding(.bottom, 8)
             }
         }
     }

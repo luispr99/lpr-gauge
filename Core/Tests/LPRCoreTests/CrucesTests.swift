@@ -76,6 +76,7 @@ final class CrucesTests: XCTestCase {
         // Por la ruta, a 0,0009° de latitud del principio (100,2 m), de su
         // geometry_index; la ruta entera, el doble
         XCTAssertEqual(try XCTUnwrap(cruce.recorrido), 100.19, accuracy: 0.05)
+        XCTAssertEqual(cruce.indiceTrazado, 1)
         XCTAssertEqual(rutas[0].longitud, 200.38, accuracy: 0.05)
         XCTAssertEqual(rutas[1].puntos.count, 1)
         XCTAssertEqual(rutas[1].cruces, [])
@@ -430,6 +431,126 @@ final class CrucesTests: XCTestCase {
                 }
             comprobar(calles, esperadas)
         }
+    }
+
+    // MARK: Solo carreteras (v0.10, app 0.14.0)
+
+    func testSoloCarreteras() {
+        let aristas: [Int: [AristaQueCruza]] = [
+            1: [AristaQueCruza(rumbo: 93, uso: "road"), AristaQueCruza(rumbo: 178, uso: "cycleway"),
+                AristaQueCruza(rumbo: 271, uso: nil)],
+            2: [AristaQueCruza(rumbo: 10, uso: "service_road")],
+            3: [AristaQueCruza(rumbo: 44, uso: "driveway"), AristaQueCruza(rumbo: 137, uso: "alley")],
+            6: [AristaQueCruza(rumbo: 2, uso: "footway"), AristaQueCruza(rumbo: 8, uso: "road")],
+            7: [AristaQueCruza(rumbo: 97, uso: "road"), AristaQueCruza(rumbo: 101, uso: "steps")],
+            8: [AristaQueCruza(rumbo: 0, uso: "road"), AristaQueCruza(rumbo: 60, uso: "ramp"),
+                AristaQueCruza(rumbo: 120, uso: "turn_channel"), AristaQueCruza(rumbo: 180, uso: "living_street"),
+                AristaQueCruza(rumbo: 240, uso: "service_road"), AristaQueCruza(rumbo: 300, uso: "culdesac")],
+            9: [AristaQueCruza(rumbo: 90, uso: "pedestrian_crossing")],
+        ]
+        let cruces = [
+            // La calle (a 3°) se queda; el carril bici (a 2°), fuera; la de
+            // 270 casa con una arista sin uso: se queda
+            Cruce(punto: punto(0, 100), rumbos: [90, 180, 270], entradas: [true, nil, false], indiceTrazado: 1),
+            // Una vía de servicio: se queda
+            Cruce(punto: punto(0, 200), rumbos: [10], indiceTrazado: 2),
+            // Un garaje y un callejón: el cruce se queda sin calles y se quita
+            Cruce(punto: punto(0, 300), rumbos: [45, 135], indiceTrazado: 3),
+            // Sin índice, o sin aristas en su nodo: como están
+            Cruce(punto: punto(0, 400), rumbos: [90]),
+            Cruce(punto: punto(0, 500), rumbos: [0], indiceTrazado: 5),
+            // 359° casa con la acera de 2° (a 3°, dando la vuelta), no con la
+            // calle de 8° (a 9°): fuera
+            Cruce(punto: punto(0, 600), rumbos: [359], indiceTrazado: 6),
+            // Con la más parecida: las escaleras (a 1°), no la calle (a 3°)
+            Cruce(punto: punto(0, 700), rumbos: [100], indiceTrazado: 7),
+            // Los seis usos de carretera se quedan
+            Cruce(punto: punto(0, 800), rumbos: [0, 60, 120, 180, 240, 300], indiceTrazado: 8),
+            // A 5° del paso de peatones ya no casa: se queda
+            Cruce(punto: punto(0, 900), rumbos: [95], indiceTrazado: 9),
+        ]
+        var primero = cruces[0]
+        primero.rumbos = [90, 270]
+        primero.entradas = [true, false]
+        XCTAssertEqual(Cruces.soloCarreteras(cruces, aristas: aristas),
+                       [primero, cruces[1], cruces[3], cruces[4], cruces[7], cruces[8]])
+        // Sin atributos, como están
+        XCTAssertEqual(Cruces.soloCarreteras(cruces, aristas: [:]), cruces)
+    }
+
+    func testSoloCarreterasEnLaRuta() throws {
+        // Hacia el norte, un cruce cada 100 m, casados con los nodos de
+        // /trace_attributes por su geometry_index:
+        // - a 100 m, una calle (90°) y una acera (270°): queda la calle;
+        // - a 200 m, una calle de un sentido que llega a la ruta (85°) y una
+        //   acera (275°), las dos sin entrada: con la regla 1 se iban las dos;
+        //   con el filtro antes, queda la calle;
+        // - a 300 m, una calle a 45° (el pasillo de aparcamiento, a 60°, está
+        //   a más de 4°: no casa) y un garaje (300° con el de 297°): fuera.
+        let puntos = (0...4).map { punto(0, Double($0) * 100) }
+        let osrm = try respuestaOSRM(puntos, pasos: [
+            ["intersections": [
+                interseccion(puntos[0], [0], entry: [true], salida: 0, indice: 0),
+                interseccion(puntos[1], [0, 90, 180, 270], entry: [true, true, false, true], entrada: 2, salida: 0,
+                             indice: 1),
+                interseccion(puntos[2], [0, 85, 180, 275], entry: [true, false, false, false], entrada: 2, salida: 0,
+                             indice: 2),
+                interseccion(puntos[3], [0, 45, 180, 300], entry: [true, true, false, true], entrada: 2, salida: 0,
+                             indice: 3),
+            ]],
+            ["maneuver": ["type": "arrive"], "intersections": [
+                interseccion(puntos[4], [180], entry: [true], entrada: 0, indice: 4),
+            ]],
+        ])
+        let ruta = try XCTUnwrap(RespuestaOSRM.rutas(de: osrm).first)
+        // Sin atributos, como hasta la 0.13.0: el de 200 m, fuera por la regla 1
+        XCTAssertEqual(ruta.cruces.map(\.rumbos), [[90, 270], [45, 300]])
+        XCTAssertFalse(ruta.soloCarreteras)
+
+        let atributos = try RespuestaAtributos.leer(Data(#"""
+        {
+          "units": "kilometers",
+          "edges": [
+            { "use": "road", "length": 0.1, "end_shape_index": 1, "end_node": { "intersecting_edges": [
+              { "begin_heading": 92, "use": "road" }, { "begin_heading": 268, "use": "footway" } ] } },
+            { "use": "road", "length": 0.1, "end_shape_index": 2, "end_node": { "intersecting_edges": [
+              { "begin_heading": 86, "use": "road" }, { "begin_heading": 274, "use": "footway" } ] } },
+            { "use": "road", "length": 0.1, "end_shape_index": 3, "end_node": { "intersecting_edges": [
+              { "begin_heading": 60, "use": "parking_aisle" }, { "begin_heading": 297, "use": "driveway" } ] } },
+            { "use": "road", "length": 0.1, "end_shape_index": 4 }
+          ]
+        }
+        """#.utf8))
+        let carreteras = try XCTUnwrap(ruta.conSoloCarreteras(atributos))
+        XCTAssertTrue(carreteras.soloCarreteras)
+        XCTAssertEqual(carreteras.cruces.map(\.rumbos), [[90], [85], [45]])
+        XCTAssertEqual(carreteras.cruces.map(\.entradas), [[true], [false], [true]])
+        XCTAssertEqual(carreteras.cruces.map(\.indiceTrazado), [1, 2, 3])
+        XCTAssertEqual(carreteras.crucesConAnillos, carreteras.cruces)
+        XCTAssertEqual(carreteras.puntos, ruta.puntos)
+        XCTAssertEqual(carreteras.vias, ruta.vias)
+        // Otra vez, desde los cruces como llegaron: lo mismo
+        XCTAssertEqual(carreteras.conSoloCarreteras(atributos), carreteras)
+
+        // Atributos de otro trazado (la última arista no acaba en el último
+        // punto): no se aplican
+        var otros = atributos
+        otros.ultimoIndice = 3
+        XCTAssertNil(ruta.conSoloCarreteras(otros))
+    }
+
+    func testReglaUnoEnLaRuta() {
+        // La regla 1 la aplica RutaConCruces (desde la 0.14.0): dos calles
+        // sin entrada, fuera; una sola, o con alguna de entrar, se quedan
+        let cruces = [
+            Cruce(punto: punto(0, 100), rumbos: [90, 270], recorrido: 100, entradas: [false, false]),
+            Cruce(punto: punto(0, 200), rumbos: [90], recorrido: 200, entradas: [false]),
+            Cruce(punto: punto(0, 300), rumbos: [90, 270], recorrido: 300, entradas: [false, true]),
+            Cruce(punto: punto(0, 400), rumbos: [90, 270], recorrido: 400, entradas: [false, nil]),
+        ]
+        XCTAssertEqual(Cruces.quitarSinEntrada(cruces), Array(cruces[1...]))
+        XCTAssertEqual(RutaConCruces(puntos: [punto(0, 0), punto(0, 500)], cruces: cruces).cruces,
+                       Array(cruces[1...]))
     }
 
     func testDiferenciaAngular() {

@@ -21,11 +21,14 @@ public struct Cruce: Equatable {
     /// RutaConCruces.anillos. Son de la rotonda los cruces de su paso y el
     /// primero del paso siguiente (la salida). Nil en los demás.
     public var anillo: Int?
+    /// Índice del cruce en el trazado de la ruta (`geometry_index`); nil si no
+    /// se conoce. Para casarlo con los nodos de /trace_attributes (v0.10).
+    public var indiceTrazado: Int?
 
     /// `entradas` con otra longitud que `rumbos` (o sin dar) se toma como
     /// desconocida en todas las calles.
     public init(punto: PuntoRuta, rumbos: [Double], recorrido: Double? = nil, entradas: [Bool?]? = nil,
-                anillo: Int? = nil) {
+                anillo: Int? = nil, indiceTrazado: Int? = nil) {
         self.punto = punto
         self.rumbos = rumbos
         self.recorrido = recorrido
@@ -35,6 +38,7 @@ public struct Cruce: Equatable {
             self.entradas = [Bool?](repeating: nil, count: rumbos.count)
         }
         self.anillo = anillo
+        self.indiceTrazado = indiceTrazado
     }
 
     /// Si se puede entrar por la calle `indice` (de `rumbos`); nil si no se
@@ -70,20 +74,48 @@ public struct RutaConCruces: Equatable {
     /// y después, la regla 2, como en `cruces`. Se calculan al crear la ruta,
     /// una vez. Para el mensaje, `crucesConAnillosSoloEn(_:)`.
     public private(set) var crucesConAnillos: [Cruce]
-    /// Los cruces como llegan (con la regla 1, sin la 2), para rehacer los de
-    /// un cuadro con anillos con solo algunas rotondas.
+    /// Los cruces con la regla 1, sin la 2, para rehacer los de un cuadro con
+    /// anillos con solo algunas rotondas.
     private var crucesSinJuntar: [Cruce]
+    /// Los cruces como llegan (sin la regla 1), para rehacerlo todo con solo
+    /// las calles de carretera (`conSoloCarreteras(_:)`, v0.10).
+    private var crucesLlegados: [Cruce]
+    /// Si ya lleva solo las calles de carretera (`conSoloCarreteras(_:)`).
+    public private(set) var soloCarreteras = false
 
+    /// `cruces`: los de la ruta, como llegan, cada uno con sus calles
+    /// laterales. Aquí se les aplican la regla 1 (Cruces.quitarSinEntrada) y,
+    /// después, las rotondas y la regla 2.
     public init(puntos: [PuntoRuta], cruces: [Cruce], vias: [String] = [], anillos: [Anillo] = []) {
         self.puntos = puntos
-        self.crucesSinJuntar = cruces
-        self.cruces = Cruces.juntarDobles(en: cruces)
+        self.crucesLlegados = cruces
+        let utiles = Cruces.quitarSinEntrada(cruces)
+        self.crucesSinJuntar = utiles
+        self.cruces = Cruces.juntarDobles(en: utiles)
         self.longitud = RespuestaOSRM.recorridos(puntos).last ?? 0
         self.vias = vias
         self.anillos = anillos
         // La regla 2 después de las rotondas: las calles del anillo ya no
         // cuentan y la del brazo con isleta, sí (como en el estudio)
-        self.crucesConAnillos = Cruces.juntarDobles(en: Cruces.conAnillos(cruces, anillos: anillos))
+        self.crucesConAnillos = Cruces.juntarDobles(en: Cruces.conAnillos(utiles, anillos: anillos))
+    }
+
+    /// La misma ruta con solo las calles de carretera (Cruces.soloCarreteras,
+    /// v0.10), con los atributos de /trace_attributes de su trazado: el filtro
+    /// va antes que las reglas 1 y 2 y que las rotondas, que se rehacen. Nil
+    /// si los atributos no encajan con el trazado (AtributosRuta.encaja): se
+    /// queda como está.
+    public func conSoloCarreteras(_ atributos: AtributosRuta) -> RutaConCruces? {
+        guard atributos.encaja(puntos: puntos.count) else { return nil }
+        var ruta = RutaConCruces(
+            puntos: puntos,
+            cruces: Cruces.soloCarreteras(crucesLlegados, aristas: atributos.aristasQueCruzan),
+            vias: vias,
+            anillos: anillos
+        )
+        ruta.crucesLlegados = crucesLlegados
+        ruta.soloCarreteras = true
+        return ruta
     }
 
     /// Los cruces para un cuadro que dibuja los anillos, sin las calles del
@@ -126,9 +158,10 @@ public enum RespuestaOSRM {
     static let tiposRotonda: Set<String> = ["roundabout", "rotary"]
 
     /// Las rutas, en el orden de la respuesta. Los cruces sin calles laterales
-    /// (la salida, la llegada, una curva sin cruce) no se guardan, ni las
-    /// calles de los cruces que caen en la regla 1. Lanza un error si no es
-    /// una respuesta OSRM (por ejemplo, la del formato propio de Valhalla).
+    /// (la salida, la llegada, una curva sin cruce) no se guardan; los que
+    /// caen en la regla 1 los quita RutaConCruces (desde la 0.14.0, para que
+    /// el filtro de carreteras vaya antes). Lanza un error si no es una
+    /// respuesta OSRM (por ejemplo, la del formato propio de Valhalla).
     public static func rutas(de datos: Data) throws -> [RutaConCruces] {
         let respuesta = try JSONDecoder().decode(Respuesta.self, from: datos)
         return respuesta.routes.map { ruta(de: $0) }
@@ -185,9 +218,9 @@ public enum RespuestaOSRM {
     }
 
     /// El cruce de una intersección con sus calles laterales (todas salvo la de
-    /// llegada y la de salida); nil si no tiene, si le falta la posición o si
-    /// cae en la regla 1. `entry` solo se usa si tiene la misma longitud que
-    /// `bearings`; si no, las entradas quedan desconocidas.
+    /// llegada y la de salida); nil si no tiene o si le falta la posición. La
+    /// regla 1 va después, en RutaConCruces. `entry` solo se usa si tiene la
+    /// misma longitud que `bearings`; si no, las entradas quedan desconocidas.
     static func cruce(de interseccion: Interseccion, hastaPunto: [Double]) -> Cruce? {
         guard interseccion.location.count >= 2, let rumbos = interseccion.bearings else { return nil }
         let entry: [Bool]? = interseccion.entry.flatMap { $0.count == rumbos.count ? $0 : nil }
@@ -197,16 +230,13 @@ public enum RespuestaOSRM {
             guard let entry, entry.indices.contains(i) else { return nil }
             return entry[i]
         }
-        // Regla 1: varias laterales y ninguna por la que se pueda entrar
-        if laterales.count >= minimoLateralesSinEntrada && entradas.allSatisfy({ $0 == false }) {
-            return nil
-        }
         let indice = interseccion.indiceTrazado ?? -1
         return Cruce(
             punto: PuntoRuta(latitud: interseccion.location[1], longitud: interseccion.location[0]),
             rumbos: laterales.map { rumbos[$0] },
             recorrido: hastaPunto.indices.contains(indice) ? hastaPunto[indice] : nil,
-            entradas: entradas
+            entradas: entradas,
+            indiceTrazado: interseccion.indiceTrazado
         )
     }
 
@@ -311,11 +341,94 @@ public enum Cruces {
     /// vio la revisión de la 0.10.0). Solo se hace al cambiar de ruta. Nil si no
     /// hay ninguna.
     public static func buscar(_ geometria: [PuntoRuta], en rutas: [RutaConCruces]) -> RutaConCruces? {
-        guard !geometria.isEmpty else { return nil }
-        return rutas.first { ruta in
-            ruta.puntos.count == geometria.count
-                && zip(ruta.puntos, geometria).allSatisfy { Trazo.distancia($0, $1) < 1 }
+        rutas.first { mismoTrazado($0.puntos, geometria) }
+    }
+
+    /// Si dos trazados son el mismo: no vacíos, con el mismo número de puntos
+    /// y todos a menos de 1 m (como `buscar`).
+    public static func mismoTrazado(_ a: [PuntoRuta], _ b: [PuntoRuta]) -> Bool {
+        !a.isEmpty && a.count == b.count && zip(a, b).allSatisfy { Trazo.distancia($0, $1) < 1 }
+    }
+
+    /// Regla 1 de las rayas dobles (RespuestaOSRM.minimoLateralesSinEntrada):
+    /// quita los cruces con dos calles laterales o más y ninguna por la que se
+    /// pueda entrar (`entry` false en todas). Hasta la 0.13.0 se aplicaba al
+    /// leer la respuesta; desde la 0.14.0, en RutaConCruces, para que el
+    /// filtro de carreteras vaya antes: así, de una calle de un sentido que
+    /// llega a la ruta junto a una acera, queda la calle.
+    public static func quitarSinEntrada(_ cruces: [Cruce]) -> [Cruce] {
+        cruces.filter { cruce in
+            !(cruce.rumbos.count >= RespuestaOSRM.minimoLateralesSinEntrada
+                && cruce.rumbos.indices.allSatisfy { cruce.entrada($0) == false })
         }
+    }
+
+    /// Usos de Valhalla (`use`) de las calles que se mandan en CRUCES (v0.10,
+    /// a petición del autor: «solo quiero carreteras»): las calles normales,
+    /// los enlaces, los ramales de giro, las calles residenciales de
+    /// prioridad peatonal, las vías de servicio y los fondos de saco. Fuera
+    /// quedan, entre otros, los accesos a garajes (`driveway`), los pasillos
+    /// de aparcamiento (`parking_aisle`), los callejones (`alley`), las pistas
+    /// (`track`), los caminos, los carriles bici, las aceras, los pasos de
+    /// peatones y las escaleras.
+    static let usosDeCarretera: Set<String> = [
+        "road", "ramp", "turn_channel", "living_street", "service_road", "culdesac",
+    ]
+
+    /// Grados como mucho entre una calle lateral y la arista que cruza el
+    /// nodo para que sean la misma (como en el estudio del 2026-10-09: con 3
+    /// rutas reales, todas las calles casaron).
+    static let gradosCasado = 4.0
+
+    /// Solo carreteras (v0.10): de cada cruce con aristas que cruzan su nodo
+    /// (`aristas`, por índice del trazado; el del cruce es su
+    /// `indiceTrazado`), quita las calles laterales que casan con una arista
+    /// cuyo uso no es de carretera (`usosDeCarretera`). Cada calle casa con
+    /// la arista de rumbo más parecido (la primera, si hay empate) si está a
+    /// `gradosCasado` o menos. Se quedan como están las calles que no casan
+    /// con ninguna, las que casan con una arista sin uso y los cruces sin
+    /// índice o sin aristas. Los cruces que se quedan sin calles se quitan.
+    /// El orden no cambia.
+    public static func soloCarreteras(_ cruces: [Cruce], aristas: [Int: [AristaQueCruza]]) -> [Cruce] {
+        guard !aristas.isEmpty else { return cruces }
+        var resultado: [Cruce] = []
+        for cruce in cruces {
+            guard let indice = cruce.indiceTrazado, let cruzan = aristas[indice], !cruzan.isEmpty else {
+                resultado.append(cruce)
+                continue
+            }
+            let quedan = cruce.rumbos.indices.filter { k in
+                guard let uso = usoCasado(rumbo: cruce.rumbos[k], en: cruzan) else { return true }
+                return usosDeCarretera.contains(uso)
+            }
+            if quedan.count == cruce.rumbos.count {
+                resultado.append(cruce)
+                continue
+            }
+            if quedan.isEmpty { continue }
+            var copia = cruce
+            copia.rumbos = quedan.map { cruce.rumbos[$0] }
+            copia.entradas = quedan.map { cruce.entrada($0) }
+            resultado.append(copia)
+        }
+        return resultado
+    }
+
+    /// El uso de la arista de `cruzan` que casa con una calle de este rumbo
+    /// (la de rumbo más parecido, a `gradosCasado` o menos); nil si no casa
+    /// ninguna o si la que casa no trae uso.
+    static func usoCasado(rumbo: Double, en cruzan: [AristaQueCruza]) -> String? {
+        var mejor: AristaQueCruza?
+        var menor = Double.infinity
+        for arista in cruzan {
+            let diferencia = abs(diferenciaAngular(arista.rumbo, rumbo))
+            if diferencia < menor {
+                menor = diferencia
+                mejor = arista
+            }
+        }
+        guard let mejor, menor <= gradosCasado else { return nil }
+        return mejor.uso
     }
 
     /// Las calles de los `cruces` que quedan sobre el tramo (a menos de

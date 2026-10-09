@@ -643,21 +643,41 @@ struct NavegacionView: View {
 
             VStack(spacing: 10) {
                 HStack(spacing: 24) {
-                    if let metros = navegacion.metrosRestantes {
+                    if navegacion.llegada, let viaje = navegacion.resumenLlegada {
+                        // Al llegar, el resumen del viaje, como en el cuadro
+                        // (NAV, v0.10): lo recorrido por el GPS, el tiempo
+                        // desde «Iniciar» y la velocidad media
                         VStack {
-                            Text("Quedan").font(.caption).foregroundStyle(.secondary)
-                            Text(verbatim: Flechas.distancia(metros)).font(.headline)
+                            Text("Recorrido").font(.caption).foregroundStyle(.secondary)
+                            Text(verbatim: Flechas.distancia(viaje.metros)).font(.headline)
                         }
-                    }
-                    if let segundos = navegacion.segundosRestantes {
                         VStack {
                             Text("Tiempo").font(.caption).foregroundStyle(.secondary)
-                            Text(verbatim: Flechas.duracion(segundos)).font(.headline)
+                            Text(verbatim: Flechas.duracion(viaje.segundos)).font(.headline)
                         }
-                    }
-                    VStack {
-                        Text("Altitud").font(.caption).foregroundStyle(.secondary)
-                        Text(textoAltitud).font(.headline)
+                        if let media = viaje.velocidadMedia {
+                            VStack {
+                                Text("Media").font(.caption).foregroundStyle(.secondary)
+                                Text(verbatim: "\(Int((media * 3.6).rounded())) km/h").font(.headline)
+                            }
+                        }
+                    } else {
+                        if let metros = navegacion.metrosRestantes {
+                            VStack {
+                                Text("Quedan").font(.caption).foregroundStyle(.secondary)
+                                Text(verbatim: Flechas.distancia(metros)).font(.headline)
+                            }
+                        }
+                        if let segundos = navegacion.segundosRestantes {
+                            VStack {
+                                Text("Tiempo").font(.caption).foregroundStyle(.secondary)
+                                Text(verbatim: Flechas.duracion(segundos)).font(.headline)
+                            }
+                        }
+                        VStack {
+                            Text("Altitud").font(.caption).foregroundStyle(.secondary)
+                            Text(textoAltitud).font(.headline)
+                        }
                     }
                 }
                 Button(role: .destructive) {

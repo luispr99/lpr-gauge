@@ -198,6 +198,23 @@ final class Navegacion: ObservableObject {
     /// anillo en las rotondas cuyo anillo va en el mensaje (esos índices): se
     /// guardan para no rehacerlos cada segundo mientras no cambian.
     private var crucesConAnillosGuardados: (indices: [Int], cruces: [Cruce])?
+    /// Solo carreteras en CRUCES (v0.10): los atributos de /trace_attributes
+    /// de las candidatas, por índice (llegan con los km tramo a tramo); la
+    /// petición de los de la ruta del guiado cuando no es la de ninguna
+    /// candidata (tras un recálculo), con el trazado para el que se hizo (una
+    /// por ruta, sin repetirla si falla); y si ya se ha intentado el filtro en
+    /// la rutaCruces de ahora (aplicarCarreteras).
+    private var atributosCandidatas: [Int: AtributosRuta] = [:]
+    private var tareaCarreteras: Task<Void, Never>?
+    private var carreterasPedidas: [PuntoRuta]?
+    private var carreterasHechas = false
+
+    // MARK: Resumen del viaje (NAV, v0.10)
+    /// Tiempo y distancia desde «Iniciar»; los recálculos no lo reinician.
+    private var cuentakilometros: Cuentakilometros?
+    /// Al llegar: el tiempo, la distancia y la velocidad media del viaje, para
+    /// la pantalla; nil hasta entonces.
+    @Published private(set) var resumenLlegada: ResumenViaje?
 
     /// Para el mapa del guiado: la ruta, la posición (ajustada a la ruta si se va
     /// por ella), el rumbo y el punto del próximo giro.
@@ -232,7 +249,7 @@ final class Navegacion: ObservableObject {
     /// Las candidatas del último cálculo, para volver a elegir sin pedir nada.
     private var candidatas: [RutaCandidata] = []
     /// Km de autopista, peaje y sin asfaltar de las rutas propuestas, tramo a
-    /// tramo (ClienteValhalla.detalleVias), por índice de candidata: llegan un
+    /// tramo (ClienteValhalla.atributosVias), por índice de candidata: llegan un
     /// momento después que las rutas (a petición del autor, 2026-10-09: los de
     /// las maniobras se pasaban). Si la petición falla, va en detallesFallidos
     /// y la tarjeta usa los de las maniobras, como un máximo.
@@ -502,6 +519,7 @@ final class Navegacion: ObservableObject {
         tareaDetalles = nil
         detalles = [:]
         detallesFallidos = []
+        atributosCandidatas = [:]
     }
 
     /// Pide, una detrás de otra y respetando el ritmo del servidor
@@ -529,13 +547,16 @@ final class Navegacion: ObservableObject {
             await esperarTurno()
             guard generacion == esta, !Task.isCancelled else { return }
             do {
-                let detalle = try await ClienteValhalla.detalleVias(candidatas[indice].ruta.puntos)
+                let atributos = try await ClienteValhalla.atributosVias(candidatas[indice].ruta.puntos)
                 guard generacion == esta else { return }
-                detalles[indice] = detalle
+                detalles[indice] = atributos.detalle
+                atributosCandidatas[indice] = atributos
             } catch {
                 guard generacion == esta else { return }
                 detallesFallidos.insert(indice)
             }
+            // Si ya se guía por ella, sus cruces (solo carreteras)
+            aplicarCarreteras()
         }
     }
 
@@ -623,6 +644,9 @@ final class Navegacion: ObservableObject {
             simulando = simulador != nil
             navegando = true
             llegada = false
+            // El resumen del viaje cuenta desde aquí (NAV, v0.10)
+            cuentakilometros = Cuentakilometros(inicio: Date())
+            resumenLlegada = nil
             suscripcion = nucleo.$state
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] estado in
@@ -703,6 +727,12 @@ final class Navegacion: ObservableObject {
         maniobraEscala = nil
         rutaCruces = nil
         RutasRecientes.compartida.olvidar()
+        tareaCarreteras?.cancel()
+        tareaCarreteras = nil
+        carreterasPedidas = nil
+        carreterasHechas = false
+        cuentakilometros = nil
+        resumenLlegada = nil
         posicionEnRuta = nil
         rumbo = nil
         puntoGiro = nil
@@ -759,6 +789,21 @@ final class Navegacion: ObservableObject {
             geometriaRuta = ruta.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lng) }
             let puntos = ruta.map { PuntoRuta(latitud: $0.lat, longitud: $0.lng) }
             rutaCruces = Cruces.buscar(puntos, en: RutasRecientes.compartida.todas())
+            // Solo carreteras (v0.10), en cuanto haya atributos de esta ruta
+            carreterasHechas = false
+            aplicarCarreteras()
+        }
+
+        // Con simulación, la distancia del viaje sale de las posiciones que
+        // ve Ferrostar (las del simulador; las del GPS, en posicionNueva), con
+        // la hora de ahora
+        if simulando, !llegada,
+           case let .navigating(currentStepGeometryIndex: _, userLocation: simulada, snappedUserLocation: _,
+                                remainingSteps: _, remainingWaypoints: _, progress: _, summary: _,
+                                deviation: _, visualInstruction: _, spokenInstruction: _,
+                                annotationJson: _) = estado.tripState {
+            cuentakilometros?.anadir(PuntoRuta(latitud: simulada.coordinates.lat, longitud: simulada.coordinates.lng),
+                                     precision: simulada.horizontalAccuracy, instante: Date())
         }
 
         if let visual = estado.currentVisualInstruction {
@@ -809,6 +854,9 @@ final class Navegacion: ObservableObject {
         }
         if case .complete = estado.tripState, !llegada {
             llegada = true
+            // El resumen del viaje se queda como está al llegar
+            cuentakilometros?.parar(Date())
+            resumenLlegada = cuentakilometros?.resumen(ahora: Date())
             // Ferrostar no para el GPS al llegar: sin esto seguiría en segundo
             // plano, con el iPhone bloqueado, hasta pulsar «Terminar» (lo vio la
             // revisión de la 0.9.0). Quitarlo se puede también en segundo plano
@@ -888,6 +936,71 @@ final class Navegacion: ObservableObject {
         }
     }
 
+    // MARK: - Solo carreteras en CRUCES (v0.10)
+
+    /// Quita de los cruces del guiado las calles que no son carretera
+    /// (RutaConCruces.conSoloCarreteras), con los atributos de
+    /// /trace_attributes de su trazado: los de la candidata con el mismo
+    /// trazado, que se piden con los km tramo a tramo, o, si no es la de
+    /// ninguna (tras un recálculo), los suyos, pedidos una vez. Se llama al
+    /// cambiar la ruta del guiado y al llegar los atributos de una candidata.
+    /// Mientras no hay, los cruces van como llegan (§7 quater).
+    private func aplicarCarreteras() {
+        guard navegando, !carreterasHechas, let ruta = rutaCruces else { return }
+        if let indice = candidatas.indices.first(where: {
+            Cruces.mismoTrazado(candidatas[$0].ruta.puntos, ruta.puntos)
+        }) {
+            if let atributos = atributosCandidatas[indice] {
+                filtrarCarreteras(atributos)
+                return
+            }
+            // Si su petición falló, no se repite (una por ruta)
+            if detallesFallidos.contains(indice) {
+                carreterasHechas = true
+                return
+            }
+            // Si aún está pendiente, llegará con los km de las propuestas
+            if tareaDetalles != nil && variantes.contains(where: { $0.indice == indice }) {
+                return
+            }
+        }
+        pedirCarreteras(ruta.puntos)
+    }
+
+    /// Aplica el filtro a rutaCruces. Si los atributos no encajan con el
+    /// trazado, se queda como está; en los dos casos, no se vuelve a intentar
+    /// con esta ruta.
+    private func filtrarCarreteras(_ atributos: AtributosRuta) {
+        guard let ruta = rutaCruces else { return }
+        carreterasHechas = true
+        if let filtrada = ruta.conSoloCarreteras(atributos) {
+            rutaCruces = filtrada
+        }
+    }
+
+    /// Una sola petición por trazado: si ya se pidió (aunque fallara), nada.
+    /// Una ruta nueva cancela la de la anterior.
+    private func pedirCarreteras(_ puntos: [PuntoRuta]) {
+        if let pedidas = carreterasPedidas, Cruces.mismoTrazado(pedidas, puntos) { return }
+        carreterasPedidas = puntos
+        tareaCarreteras?.cancel()
+        tareaCarreteras = Task { [weak self] in
+            await self?.calcularCarreteras(puntos)
+        }
+    }
+
+    private func calcularCarreteras(_ puntos: [PuntoRuta]) async {
+        // Respetando el ritmo del servidor, como las demás peticiones
+        await esperarTurno()
+        guard !Task.isCancelled, navegando else { return }
+        guard let atributos = try? await ClienteValhalla.atributosVias(puntos) else { return }
+        // La ruta puede haber cambiado mientras tanto
+        guard !Task.isCancelled, navegando, !carreterasHechas, let ruta = rutaCruces,
+              Cruces.mismoTrazado(ruta.puntos, puntos)
+        else { return }
+        filtrarCarreteras(atributos)
+    }
+
     /// Los cruces para un cuadro con anillos, sin las calles del anillo solo en
     /// las rotondas `indices` (RutaConCruces.crucesConAnillosSoloEn(_:)). Los
     /// anillos del mensaje cambian pocas veces (al entrar uno en el tramo o al
@@ -907,11 +1020,14 @@ final class Navegacion: ObservableObject {
     /// guiado. Al llegar, con «ruta activa» y el bit de llegada, código de
     /// llegada y distancia 0, hasta pulsar «Terminar»: el cuadro enseña la
     /// bandera (a petición del autor, 2026-10-09; §5). Al terminar, nil: el
-    /// enlace manda uno sin ruta activa.
+    /// enlace manda uno sin ruta activa. Con ruta, también al llegar, el
+    /// tiempo de viaje y la distancia recorrida (v0.10), para el resumen.
     private func navParaCuadro(_ estado: NavigationState) -> MensajeNav? {
         guard navegando else { return nil }
+        let viaje = cuentakilometros?.resumen(ahora: Date())
         if llegada {
-            return MensajeNav(secuencia: 0, banderas: [.rutaActiva, .llegada], maniobra: .llegada, distancia: 0)
+            return MensajeNav(secuencia: 0, banderas: [.rutaActiva, .llegada], maniobra: .llegada, distancia: 0,
+                              tiempoViaje: viaje?.segundos, distanciaRecorrida: viaje?.metros)
         }
         guard case let .navigating(currentStepGeometryIndex: _, userLocation: _, snappedUserLocation: _,
                                    remainingSteps: pasos, remainingWaypoints: _, progress: progreso, summary: _,
@@ -934,7 +1050,9 @@ final class Navegacion: ObservableObject {
             tiempoRestante: progreso.durationRemaining,
             horaLlegada: Self.horaLlegada(dentroDe: progreso.durationRemaining),
             // El paso actual entero, para el avance hacia la maniobra
-            longitudPaso: pasos.first?.distance
+            longitudPaso: pasos.first?.distance,
+            tiempoViaje: viaje?.segundos,
+            distanciaRecorrida: viaje?.metros
         )
     }
 
@@ -1041,6 +1159,15 @@ final class Navegacion: ObservableObject {
 
     private func posicionNueva(_ posicion: CLLocation) {
         posicionActual = posicion.coordinate
+        // La distancia del viaje (NAV, v0.10), con el GPS de verdad; con
+        // simulación, en actualizar. Precisión negativa: sin dato (no cuenta)
+        if navegando, !simulando, !llegada {
+            cuentakilometros?.anadir(
+                PuntoRuta(latitud: posicion.coordinate.latitude, longitud: posicion.coordinate.longitude),
+                precision: posicion.horizontalAccuracy,
+                instante: posicion.timestamp
+            )
+        }
         // Al cuadro, para el indicador de calidad del GPS (GPS, v0.7)
         enlace?.ponerPosicion(posicion)
         if posicion.verticalAccuracy > 0 {

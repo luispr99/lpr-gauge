@@ -6,8 +6,9 @@ import UIKit
 import LPRCore
 
 /// Enlace BLE con el cuadro o con el firmware de referencia (docs/PROTOCOLO.md,
-/// v0.9). Manda `MOVIL` (estado de la batería del iPhone; con el cuadro, solo al
-/// cambiar), `NAV_TEXT` (texto de la navegación), `NAV` (siguiente maniobra),
+/// v0.10). Manda `MOVIL` (estado de la batería del iPhone; con el cuadro, solo al
+/// cambiar), `NAV_TEXT` (texto de la navegación), `NAV` (siguiente maniobra y,
+/// desde la v0.10, el resumen del viaje),
 /// `TRAZO` (tramo de ruta por delante; con una placa que lo admite, con
 /// movimiento, v0.9) y, tras cada `TRAZO`, `CRUCES` (calles
 /// que salen del tramo), y lee `STATUS`. En segundo plano sigue con el modo
@@ -783,9 +784,14 @@ final class EnlaceBLE: NSObject, ObservableObject {
         let nuevo = !navActivo
         // Cambio, solo si cambian los bytes: los Double (distancias, tiempo)
         // cambian en décimas con cada posición aunque se manden igual (lo vio
-        // la revisión de la 0.10.0)
-        guard nuevo || nav.codificar() != navActual.codificar() else { return }
+        // la revisión de la 0.10.0). Sin el resumen del viaje (v0.10): el
+        // tiempo de viaje cambia cada segundo y NAV saldría siempre una vez
+        // por segundo; va con la repetición (y, al llegar, con el cambio de
+        // banderas). Por eso se guarda aunque no cambie nada más
+        let cambia = nuevo
+            || nav.codificar(maximo: MensajeNav.longitud) != navActual.codificar(maximo: MensajeNav.longitud)
         navActual = nav
+        guard cambia else { return }
         if nuevo { navActivo = true }
         if nuevo || ultimoNav.map({ Date().timeIntervalSince($0) >= Self.cambioMinimo }) ?? true {
             enviarNav()
@@ -804,8 +810,11 @@ final class EnlaceBLE: NSObject, ObservableObject {
         navPendiente = false
         var mensaje = navActual
         mensaje.secuencia = secuenciaNav.siguiente()
-        let bytes = mensaje.codificar()
-        guard bytes.count <= periferico.maximumWriteValueLength(for: .withoutResponse) else {
+        // Con el resumen del viaje (v0.10) son 25 bytes; si la conexión no los
+        // admite, los 17 de la v0.6 (§2)
+        let maximo = periferico.maximumWriteValueLength(for: .withoutResponse)
+        let bytes = mensaje.codificar(maximo: maximo)
+        guard bytes.count <= maximo else {
             anotar("NAV no cabe en el MTU actual")
             return
         }

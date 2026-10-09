@@ -93,12 +93,20 @@ final class MensajesTests: XCTestCase {
 
     // MARK: NAV
 
+    /// Tiempo de viaje y distancia recorrida desconocidos (v0.10).
+    private let sinResumen: [UInt8] = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
+
+    /// Los 17 bytes de la v0.6 con el resumen desconocido.
+    private func conResumen(_ bytes: [UInt8]) -> [UInt8] {
+        bytes + sinResumen
+    }
+
     func testNavSinRuta() {
-        XCTAssertEqual(MensajeNav(secuencia: 0, banderas: []).codificar(), [
+        XCTAssertEqual(MensajeNav(secuencia: 0, banderas: []).codificar(), conResumen([
             0x01, 0x00, 0x00, 0x00, 0x00,
             0xFF, 0xFF, 0xFF, 0x7F,
             0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-        ])
+        ]))
     }
 
     func testNavCodificaUnGiro() {
@@ -107,11 +115,11 @@ final class MensajesTests: XCTestCase {
         let mensaje = MensajeNav(secuencia: 0x10, banderas: [.rutaActiva], maniobra: .giro, distancia: 350,
                                  angulo: 90, distanciaRestante: 12_340, tiempoRestante: 900, horaLlegada: 1125,
                                  longitudPaso: 800)
-        XCTAssertEqual(mensaje.codificar(), [
+        XCTAssertEqual(mensaje.codificar(), conResumen([
             0x01, 0x10, 0x01, 0x02, 0x00,
             0x5E, 0x01, 0x5A, 0x00,
             0xD2, 0x04, 0x0F, 0x00, 0x65, 0x04, 0x20, 0x03,
-        ])
+        ]))
         XCTAssertEqual(MensajeNav.decodificar(mensaje.codificar()), mensaje)
     }
 
@@ -122,11 +130,11 @@ final class MensajesTests: XCTestCase {
                                  distancia: 120.4, angulo: -90, distanciaRestante: 5_004, tiempoRestante: 389,
                                  horaLlegada: 0, longitudPaso: nil)
         let bytes = mensaje.codificar()
-        XCTAssertEqual(bytes, [
+        XCTAssertEqual(bytes, conResumen([
             0x01, 0x11, 0x01, 0x03, 0x03,
             0x78, 0x00, 0xA6, 0xFF,
             0xF4, 0x01, 0x06, 0x00, 0x00, 0x00, 0xFF, 0xFF,
-        ])
+        ]))
         XCTAssertEqual(MensajeNav.decodificar(bytes),
                        MensajeNav(secuencia: 0x11, banderas: [.rutaActiva], maniobra: .rotonda, modificador: 3,
                                   distancia: 120, angulo: -90, distanciaRestante: 5_000, tiempoRestante: 360,
@@ -139,26 +147,63 @@ final class MensajesTests: XCTestCase {
         let fuera = MensajeNav(secuencia: 1, banderas: [.rutaActiva, .fueraDeRuta]).codificar()
         XCTAssertEqual(fuera[2], 0x05)
         // Al llegar: sin ruta activa y con el bit de llegada
-        XCTAssertEqual(MensajeNav(secuencia: 0x20, banderas: [.llegada], maniobra: .llegada).codificar(), [
+        let llegada = MensajeNav(secuencia: 0x20, banderas: [.llegada], maniobra: .llegada).codificar()
+        XCTAssertEqual(llegada, conResumen([
             0x01, 0x20, 0x08, 0x05, 0x00,
             0xFF, 0xFF, 0xFF, 0x7F,
             0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-        ])
+        ]))
     }
 
     func testNavSatura() {
+        // El tiempo de viaje se satura en 4 294 967 294 (0xFFFFFFFE); la
+        // distancia negativa, en 0
         let saturado = MensajeNav(secuencia: 0, banderas: [.rutaActiva], maniobra: .recto, distancia: 70_000,
                                   angulo: 200, distanciaRestante: 1_000_000, tiempoRestante: 10_000_000,
-                                  horaLlegada: 1440, longitudPaso: -5)
+                                  horaLlegada: 1440, longitudPaso: -5, tiempoViaje: 5_000_000_000,
+                                  distanciaRecorrida: -5)
         XCTAssertEqual(saturado.codificar(), [
             0x01, 0x00, 0x01, 0x01, 0x00,
             0xFE, 0xFF, 0xB4, 0x00,
             0xFE, 0xFF, 0xFE, 0xFF, 0xFF, 0xFF, 0x00, 0x00,
+            0xFE, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00,
         ])
         // -400 se queda en -180 (0xFF4C); lo que no es finito, desconocido
         let otro = MensajeNav(secuencia: 0, banderas: [.rutaActiva], distancia: .infinity, angulo: -400,
-                              distanciaRestante: .nan).codificar()
+                              distanciaRestante: .nan, tiempoViaje: .infinity, distanciaRecorrida: .nan).codificar()
         XCTAssertEqual(Array(otro[5...10]), [0xFF, 0xFF, 0x4C, 0xFF, 0xFF, 0xFF])
+        XCTAssertEqual(Array(otro[17...24]), sinResumen)
+    }
+
+    func testNavConResumenDelViaje() {
+        // Al llegar (v0.10, docs/vectores/mensajes.md): ruta activa y llegada
+        // (0x09), código 5, distancia 0; 1 h 23 min 45 s de viaje (5025 s,
+        // 0x000013A1) y 123 456 m recorridos (0x0001E240). Media: 88,4 km/h
+        let mensaje = MensajeNav(secuencia: 0x21, banderas: [.rutaActiva, .llegada], maniobra: .llegada,
+                                 distancia: 0, tiempoViaje: 5_025.4, distanciaRecorrida: 123_456.2)
+        let bytes = mensaje.codificar()
+        XCTAssertEqual(bytes, [
+            0x01, 0x21, 0x09, 0x05, 0x00,
+            0x00, 0x00, 0xFF, 0x7F,
+            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+            0xA1, 0x13, 0x00, 0x00, 0x40, 0xE2, 0x01, 0x00,
+        ])
+        let leido = MensajeNav.decodificar(bytes)
+        XCTAssertEqual(leido?.tiempoViaje, 5_025)
+        XCTAssertEqual(leido?.distanciaRecorrida, 123_456)
+        XCTAssertEqual(leido?.banderas.rawValue, 0x09)
+        XCTAssertEqual(leido?.maniobra, .llegada)
+        // Si la conexión no admite 25 bytes, los 17 de la v0.6 (§2)
+        XCTAssertEqual(mensaje.codificar(maximo: 20), Array(bytes.prefix(17)))
+        XCTAssertEqual(mensaje.codificar(maximo: 25), bytes)
+        // Con 17 a 24 bytes, el resumen es desconocido
+        XCTAssertNil(MensajeNav.decodificar(Array(bytes.prefix(24)))?.tiempoViaje)
+        XCTAssertNil(MensajeNav.decodificar(Array(bytes.prefix(17)))?.distanciaRecorrida)
+        // Uno solo de los dos, el otro desconocido
+        let soloTiempo = MensajeNav(secuencia: 0x21, banderas: [.rutaActiva], tiempoViaje: 60).codificar()
+        XCTAssertEqual(Array(soloTiempo[17...24]), [0x3C, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF])
+        XCTAssertNil(MensajeNav.decodificar(soloTiempo)?.distanciaRecorrida)
+        XCTAssertEqual(MensajeNav.decodificar(soloTiempo)?.tiempoViaje, 60)
     }
 
     func testNavDecodificaElFormatoCorto() {
