@@ -1,4 +1,4 @@
-// Codificación y decodificación de los mensajes (docs/PROTOCOLO.md, v0.5).
+// Codificación y decodificación de los mensajes (docs/PROTOCOLO.md, v0.6).
 // Reglas comunes (sección 3): little-endian, primer byte = versión, campos
 // nuevos al final; el receptor ignora los bytes que sobran y descarta los
 // mensajes cortos o con una versión que no conoce.
@@ -16,6 +16,173 @@ public struct Secuencia {
         let actual = proxima
         proxima = proxima &+ 1
         return actual
+    }
+}
+
+// MARK: - Enteros de 16 bits (sección 3)
+
+extension Array where Element == UInt8 {
+    /// Añade un u16 (o un i16 con su patrón de bits) en little-endian.
+    mutating func anadirU16(_ valor: UInt16) {
+        append(UInt8(valor & 0xFF))
+        append(UInt8(valor >> 8))
+    }
+}
+
+/// El u16 en little-endian que empieza en `i`.
+func leerU16(_ bytes: [UInt8], _ i: Int) -> UInt16 {
+    UInt16(bytes[i]) | UInt16(bytes[i + 1]) << 8
+}
+
+/// Metros como i16 (TRAZO y CRUCES): redondeados al metro y saturados en
+/// ±32 767; lo que no es finito, 0.
+func metrosI16(_ valor: Double) -> UInt16 {
+    let metros = valor.isFinite ? min(32_767, max(-32_767, valor.rounded())) : 0
+    return UInt16(bitPattern: Int16(metros))
+}
+
+/// Un valor sin signo en u16 (NAV): redondeado y saturado entre 0 y 65 534;
+/// sin dato o no finito, `0xFFFF` (desconocido).
+func u16Saturado(_ valor: Double?) -> UInt16 {
+    guard let valor, valor.isFinite else { return 0xFFFF }
+    return UInt16(min(65_534, max(0, valor.rounded())))
+}
+
+// MARK: - NAV (sección 5) y códigos de maniobra (sección 8)
+
+/// Código de maniobra del cuadro (§8, v0.6). La forma de la flecha la da el
+/// ángulo de NAV.
+public enum CodigoManiobra: UInt8 {
+    /// Sin flecha.
+    case desconocida = 0
+    case recto = 1
+    /// El ángulo dice a qué lado y cuánto.
+    case giro = 2
+    /// El modificador de NAV es el número de salida; el ángulo, la dirección
+    /// de la salida.
+    case rotonda = 3
+    /// El signo del ángulo es el lado.
+    case cambioDeSentido = 4
+    case llegada = 5
+    /// Inicio de la ruta.
+    case salida = 6
+
+    /// Dirección de la salida de una rotonda respecto a la de entrada (§5), de
+    /// -180 a 180, positivo a la derecha, a partir de los grados que se
+    /// recorren dentro (180: seguir recto). Circulando por la derecha la
+    /// rotonda se recorre en sentido contrario a las agujas del reloj: 180
+    /// menos los grados (90 recorridos: +90, a la derecha; 270: -90). Por la
+    /// izquierda, al revés: los grados menos 180.
+    public static func anguloRotonda(grados: Int, porLaDerecha: Bool = true) -> Int {
+        var angulo = (porLaDerecha ? 180 - grados : grados - 180) % 360
+        if angulo > 180 { angulo -= 360 }
+        if angulo < -180 { angulo += 360 }
+        return angulo
+    }
+}
+
+/// Flags de NAV (byte 2).
+public struct BanderasNav: OptionSet, Equatable {
+    public let rawValue: UInt8
+    public init(rawValue: UInt8) { self.rawValue = rawValue }
+
+    public static let rutaActiva   = BanderasNav(rawValue: 1 << 0)
+    public static let recalculando = BanderasNav(rawValue: 1 << 1)
+    public static let fueraDeRuta  = BanderasNav(rawValue: 1 << 2)
+    public static let llegada      = BanderasNav(rawValue: 1 << 3)
+}
+
+/// La siguiente maniobra (§5). Los campos sin dato son nil y viajan como
+/// «desconocido».
+public struct MensajeNav: Equatable {
+    public static let longitudMinima = 9
+    /// Con los campos de la v0.6: si el mensaje es más corto, son desconocidos.
+    public static let longitud = 17
+
+    public var secuencia: UInt8
+    public var banderas: BanderasNav
+    public var maniobra: CodigoManiobra
+    /// En rotondas, número de salida (1-n); si no, 0.
+    public var modificador: UInt8
+    /// Metros hasta la maniobra.
+    public var distancia: Double?
+    /// Grados, de -180 a 180, positivo a la derecha.
+    public var angulo: Int?
+    /// Metros hasta el destino; viajan en decenas de metros.
+    public var distanciaRestante: Double?
+    /// Segundos hasta el destino; viajan en minutos, redondeados.
+    public var tiempoRestante: Double?
+    /// Hora de llegada prevista, en minutos desde la medianoche (0-1439).
+    public var horaLlegada: Int?
+    /// Metros del paso actual entero, de la maniobra anterior a la siguiente.
+    public var longitudPaso: Double?
+
+    public init(
+        secuencia: UInt8,
+        banderas: BanderasNav,
+        maniobra: CodigoManiobra = .desconocida,
+        modificador: UInt8 = 0,
+        distancia: Double? = nil,
+        angulo: Int? = nil,
+        distanciaRestante: Double? = nil,
+        tiempoRestante: Double? = nil,
+        horaLlegada: Int? = nil,
+        longitudPaso: Double? = nil
+    ) {
+        self.secuencia = secuencia
+        self.banderas = banderas
+        self.maniobra = maniobra
+        self.modificador = modificador
+        self.distancia = distancia
+        self.angulo = angulo
+        self.distanciaRestante = distanciaRestante
+        self.tiempoRestante = tiempoRestante
+        self.horaLlegada = horaLlegada
+        self.longitudPaso = longitudPaso
+    }
+
+    /// Siempre los 17 bytes de la v0.6. Las distancias y el tiempo se redondean
+    /// y se saturan en 65 534; el ángulo, en ±180; una hora de llegada fuera
+    /// de 0-1439 va como desconocida.
+    public func codificar() -> [UInt8] {
+        var bytes: [UInt8] = [Protocolo.version, secuencia, banderas.rawValue, maniobra.rawValue, modificador]
+        bytes.anadirU16(u16Saturado(distancia))
+        bytes.anadirU16(angulo.map { UInt16(bitPattern: Int16(min(180, max(-180, $0)))) } ?? 0x7FFF)
+        bytes.anadirU16(u16Saturado(distanciaRestante.map { $0 / 10 }))
+        bytes.anadirU16(u16Saturado(tiempoRestante.map { $0 / 60 }))
+        bytes.anadirU16(horaLlegada.flatMap { hora -> UInt16? in
+            (0...1439).contains(hora) ? UInt16(hora) : nil
+        } ?? 0xFFFF)
+        bytes.anadirU16(u16Saturado(longitudPaso))
+        return bytes
+    }
+
+    /// Descarta lo corto y otra versión. Un código de maniobra que no conoce
+    /// se lee como desconocido (supuesto: así una tabla más larga no hace
+    /// descartar el mensaje entero).
+    public static func decodificar(_ bytes: [UInt8]) -> MensajeNav? {
+        guard bytes.count >= longitudMinima, bytes[0] == Protocolo.version else { return nil }
+        func valor(_ i: Int) -> Double? {
+            let crudo = leerU16(bytes, i)
+            return crudo == 0xFFFF ? nil : Double(crudo)
+        }
+        let angulo = Int16(bitPattern: leerU16(bytes, 7))
+        var mensaje = MensajeNav(
+            secuencia: bytes[1],
+            banderas: BanderasNav(rawValue: bytes[2]),
+            maniobra: CodigoManiobra(rawValue: bytes[3]) ?? .desconocida,
+            modificador: bytes[4],
+            distancia: valor(5),
+            angulo: angulo == 0x7FFF ? nil : Int(angulo)
+        )
+        if bytes.count >= longitud {
+            mensaje.distanciaRestante = valor(9).map { $0 * 10 }
+            mensaje.tiempoRestante = valor(11).map { $0 * 60 }
+            let hora = leerU16(bytes, 13)
+            mensaje.horaLlegada = hora <= 1439 ? Int(hora) : nil
+            mensaje.longitudPaso = valor(15)
+        }
+        return mensaje
     }
 }
 
@@ -110,15 +277,18 @@ public struct MensajeStatus: Equatable {
     public var ecoNavText: UInt8?
     /// nil si el dispositivo es anterior a la v0.4 (STATUS de menos de 7 bytes).
     public var ecoTrazo: UInt8?
+    /// nil si el dispositivo es anterior a la v0.6 (STATUS de menos de 8 bytes).
+    public var ecoCruces: UInt8?
 
     public init(ecoNav: UInt8, ecoGPS: UInt8, pideReenvio: Bool, ecoMovil: UInt8?,
-                ecoNavText: UInt8? = nil, ecoTrazo: UInt8? = nil) {
+                ecoNavText: UInt8? = nil, ecoTrazo: UInt8? = nil, ecoCruces: UInt8? = nil) {
         self.ecoNav = ecoNav
         self.ecoGPS = ecoGPS
         self.pideReenvio = pideReenvio
         self.ecoMovil = ecoMovil
         self.ecoNavText = ecoMovil == nil ? nil : ecoNavText
         self.ecoTrazo = self.ecoNavText == nil ? nil : ecoTrazo
+        self.ecoCruces = self.ecoTrazo == nil ? nil : ecoCruces
     }
 
     public func codificar() -> [UInt8] {
@@ -127,7 +297,10 @@ public struct MensajeStatus: Equatable {
             bytes.append(ecoMovil)
             if let ecoNavText {
                 bytes.append(ecoNavText)
-                if let ecoTrazo { bytes.append(ecoTrazo) }
+                if let ecoTrazo {
+                    bytes.append(ecoTrazo)
+                    if let ecoCruces { bytes.append(ecoCruces) }
+                }
             }
         }
         return bytes
@@ -141,7 +314,8 @@ public struct MensajeStatus: Equatable {
             pideReenvio: bytes[3] & 0x01 != 0,
             ecoMovil: bytes.count >= 5 ? bytes[4] : nil,
             ecoNavText: bytes.count >= 6 ? bytes[5] : nil,
-            ecoTrazo: bytes.count >= 7 ? bytes[6] : nil
+            ecoTrazo: bytes.count >= 7 ? bytes[6] : nil,
+            ecoCruces: bytes.count >= 8 ? bytes[7] : nil
         )
     }
 }
@@ -158,11 +332,16 @@ public struct MensajeTrazo: Equatable {
     public var puntos: [PuntoPlano]
     /// Índice del próximo giro en `puntos`, o nil.
     public var giro: Int?
+    /// Escala (v0.6, bits 1-2 de los flags): 0 la ajusta el dispositivo al
+    /// tramo; 1 = 250 m, 2 = 500 m y 3 = 1000 m desde la moto hasta el borde de
+    /// arriba del dibujo (Trazo.nivel).
+    public var escala: UInt8
 
-    public init(secuencia: UInt8, puntos: [PuntoPlano], giro: Int?) {
+    public init(secuencia: UInt8, puntos: [PuntoPlano], giro: Int?, escala: UInt8 = 0) {
         self.secuencia = secuencia
         self.puntos = puntos
         self.giro = giro
+        self.escala = escala
     }
 
     /// Cuántos puntos caben en `maximo` bytes (lo que admite la conexión), sin
@@ -173,7 +352,8 @@ public struct MensajeTrazo: Equatable {
 
     /// Bytes del mensaje, sin pasar de `maximo`: si no caben todos los puntos,
     /// se mandan los primeros (el tramo se acorta). Las coordenadas se
-    /// redondean al metro y se saturan en ±32 767.
+    /// redondean al metro y se saturan en ±32 767. Una escala mayor que 3 va
+    /// como 3; sin tramo, los flags van a cero, sin escala (supuesto).
     public func codificar(maximo: Int = longitudMinima + 4 * maximoPuntos) -> [UInt8] {
         let caben = Self.puntosQueCaben(maximo)
         let lista = Array(puntos.prefix(caben))
@@ -184,37 +364,107 @@ public struct MensajeTrazo: Equatable {
         } else {
             indiceGiro = 255
         }
-        var bytes: [UInt8] = [Protocolo.version, secuencia, hay ? 0x01 : 0x00, indiceGiro]
+        let flags: UInt8 = hay ? 0x01 | min(escala, 3) << 1 : 0x00
+        var bytes: [UInt8] = [Protocolo.version, secuencia, flags, indiceGiro]
         guard hay else { return bytes }
         for punto in lista {
-            for valor in [punto.x, punto.y] {
-                let metros = valor.isFinite ? min(32_767, max(-32_767, valor.rounded())) : 0
-                let entero = Int16(metros)
-                let sinSigno = UInt16(bitPattern: entero)
-                bytes.append(UInt8(sinSigno & 0xFF))
-                bytes.append(UInt8(sinSigno >> 8))
-            }
+            bytes.anadirU16(metrosI16(punto.x))
+            bytes.anadirU16(metrosI16(punto.y))
         }
         return bytes
     }
 
     /// Descarta lo corto y otra versión. Sin el bit 0, o con menos de dos
-    /// puntos, sin tramo (puntos vacíos).
+    /// puntos, sin tramo (puntos vacíos y escala 0).
     public static func decodificar(_ bytes: [UInt8]) -> MensajeTrazo? {
         guard bytes.count >= longitudMinima, bytes[0] == Protocolo.version else { return nil }
         var puntos: [PuntoPlano] = []
         if bytes[2] & 0x01 != 0 {
             var i = longitudMinima
             while i + 3 < bytes.count {
-                let x = Int16(bitPattern: UInt16(bytes[i]) | UInt16(bytes[i + 1]) << 8)
-                let y = Int16(bitPattern: UInt16(bytes[i + 2]) | UInt16(bytes[i + 3]) << 8)
+                let x = Int16(bitPattern: leerU16(bytes, i))
+                let y = Int16(bitPattern: leerU16(bytes, i + 2))
                 puntos.append(PuntoPlano(x: Double(x), y: Double(y)))
                 i += 4
             }
         }
         if puntos.count < 2 { puntos = [] }
         let giro: Int? = (bytes[3] == 255 || Int(bytes[3]) >= puntos.count) ? nil : Int(bytes[3])
-        return MensajeTrazo(secuencia: bytes[1], puntos: puntos, giro: giro)
+        let escala: UInt8 = puntos.isEmpty ? 0 : (bytes[2] >> 1) & 0x03
+        return MensajeTrazo(secuencia: bytes[1], puntos: puntos, giro: giro, escala: escala)
+    }
+}
+
+// MARK: - CRUCES (sección 7 quater)
+
+/// Una calle que sale de un cruce del tramo de TRAZO.
+public struct CalleCruce: Equatable {
+    /// El cruce, en metros en los ejes de la moto (los de TRAZO).
+    public var x: Double
+    public var y: Double
+    /// Dirección de la calle desde el cruce, en 1/256 de vuelta y en sentido
+    /// horario desde «hacia delante»: 0 delante, 64 derecha, 128 atrás, 192
+    /// izquierda.
+    public var direccion: UInt8
+
+    public init(x: Double, y: Double, direccion: UInt8) {
+        self.x = x
+        self.y = y
+        self.direccion = direccion
+    }
+}
+
+public struct MensajeCruces: Equatable {
+    public static let longitudMinima = 4
+    /// Como mucho: 4 bytes de cabecera y 35 calles de 5 bytes (179 bytes).
+    public static let maximoCalles = 35
+
+    public var secuencia: UInt8
+    /// Secuencia del TRAZO al que acompaña: el dispositivo solo dibuja las
+    /// calles con ese tramo.
+    public var trazo: UInt8
+    /// Los cruces más cercanos a la moto primero (Cruces.calles).
+    public var calles: [CalleCruce]
+
+    public init(secuencia: UInt8, trazo: UInt8, calles: [CalleCruce]) {
+        self.secuencia = secuencia
+        self.trazo = trazo
+        self.calles = calles
+    }
+
+    /// Cuántas calles caben en `maximo` bytes (lo que admite la conexión), sin
+    /// pasar de 35.
+    public static func callesQueCaben(_ maximo: Int) -> Int {
+        max(0, min(maximoCalles, (maximo - longitudMinima) / 5))
+    }
+
+    /// Bytes del mensaje, sin pasar de `maximo`: si no caben todas las calles,
+    /// se recorta por el final (se quedan las de los cruces más cercanos). Las
+    /// coordenadas, como en TRAZO.
+    public func codificar(maximo: Int = longitudMinima + 5 * maximoCalles) -> [UInt8] {
+        let lista = calles.prefix(Self.callesQueCaben(maximo))
+        var bytes: [UInt8] = [Protocolo.version, secuencia, trazo, UInt8(lista.count)]
+        for calle in lista {
+            bytes.anadirU16(metrosI16(calle.x))
+            bytes.anadirU16(metrosI16(calle.y))
+            bytes.append(calle.direccion)
+        }
+        return bytes
+    }
+
+    /// Descarta lo corto y otra versión. Lee como mucho `n` calles, y solo las
+    /// que lleguen enteras (supuesto).
+    public static func decodificar(_ bytes: [UInt8]) -> MensajeCruces? {
+        guard bytes.count >= longitudMinima, bytes[0] == Protocolo.version else { return nil }
+        var calles: [CalleCruce] = []
+        var i = longitudMinima
+        while calles.count < Int(bytes[3]), i + 4 < bytes.count {
+            let x = Int16(bitPattern: leerU16(bytes, i))
+            let y = Int16(bitPattern: leerU16(bytes, i + 2))
+            calles.append(CalleCruce(x: Double(x), y: Double(y), direccion: bytes[i + 4]))
+            i += 5
+        }
+        return MensajeCruces(secuencia: bytes[1], trazo: bytes[2], calles: calles)
     }
 }
 
@@ -234,6 +484,8 @@ public struct Capacidades: OptionSet, Equatable {
     /// El dispositivo da MOVIL por bueno mientras dure la conexión: la app lo
     /// manda solo al cambiar (v0.5, §7).
     public static let movilAlCambiar = Capacidades(rawValue: 1 << 7)
+    /// Calles de los cruces del tramo (v0.6, §7 quater).
+    public static let cruces  = Capacidades(rawValue: 1 << 8)
 }
 
 public struct DeviceInfo: Equatable {

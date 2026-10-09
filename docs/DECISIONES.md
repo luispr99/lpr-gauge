@@ -389,7 +389,10 @@ final.
     (`Trazo.simplificar` lo conserva; con prueba);
   - al conectar se mandaba todo dos veces.
 - **Cuadro:** se describe en su `docs/CAMBIOS_CLAUDE.md`, secciones 75 y
-  75 bis (el código no entra en este repositorio).
+  75 bis (el código no entra en este repositorio). Recibe `TRAZO` y lo dibuja
+  con una línea de LVGL y un marcador de la moto; la distancia y la
+  instrucción van debajo. El rayo verde va ahora encima del icono del móvil,
+  que con la carga toma el color del tema.
 - **0.9.3:** botón «Ocultar teclado» encima del teclado en todos los campos de
   texto (a petición del autor).
 - **0.9.4, panel de rutas.** Diseño aprobado por el autor con vistas previas,
@@ -404,10 +407,83 @@ final.
   - Tarjetas de ruta: título; km, curvas y lo que tarda de más; y un aviso
     por línea, el peaje primero. Las líneas se reparten el alto.
   - El tiempo va en grande a la derecha, en el sitio de la antigua marca de
-    elegida. Recibe `TRAZO` y lo dibuja con una línea de
-  LVGL y un marcador de la moto; la distancia y la instrucción van debajo. El
-  rayo verde va ahora encima del icono del móvil, que con la carga toma el
-  color del tema.
+    elegida.
+
+### 2026-10-09 · Cara de navegación nueva: flecha, escala por niveles y cruces (0.10.0)
+
+- **Petición del autor:** una cara de navegación nueva en el cuadro, a partir
+  de una imagen de Beeline: el texto en una franja negra, flechas de
+  maniobra, la llegada, un arco con el avance hacia la maniobra, las calles de
+  los cruces y el triángulo de la moto en rojo. Además, el dibujo se acercaba
+  al llegar al giro y parecía que faltaba más: el autor eligió fijar la escala
+  por niveles según lo que falte.
+- **Protocolo v0.6** (`PROTOCOLO.md`; la versión del formato sigue siendo 1):
+  - `NAV` completo (sección 5), con una tabla de maniobras propia y corta
+    (sección 8): la forma de la flecha la da el ángulo, con valores nominales
+    del modificador. Añade la distancia y el tiempo restantes, la hora de
+    llegada y la longitud del paso actual;
+  - escala por niveles en los bits 1-2 de los flags de `TRAZO` (sección 7
+    ter): con más de 500 m hasta la maniobra, 1000 m; de 500 a 200 m, 500 m;
+    con menos de 200 m, 250 m. Dentro de una maniobra solo baja, y la app
+    manda 1,25 veces los metros del nivel;
+  - `CRUCES` (sección 7 quater, bit 8 de capacidades): las calles que salen
+    del tramo, justo después de cada `TRAZO` y con su secuencia; eco en el
+    byte 7 de `STATUS`.
+- **Comprobado el 2026-10-09:** Valhalla, en formato OSRM, da en cada paso
+  sus cruces (`intersections`): la posición, los rumbos de todas las calles
+  (`bearings`, enteros) y los índices de la de llegada (`in`) y la de salida
+  (`out`). Las calles laterales son las demás. Se comprobó con consultas a
+  valhalla1.openstreetmap.de, una de ellas con las opciones que pone
+  Ferrostar 0.57.0 en su petición (`format: osrm` y sus `filters`); los pasos
+  traen también `driving_side`. Según la documentación de Ferrostar 0.57.0,
+  `roundaboutExitDegrees` son los grados que se recorren dentro de la
+  rotonda, 180 para seguir recto.
+- **App** (`Core` con pruebas, y la app):
+  - `NAV`: el código y el ángulo salen del tipo y del modificador de
+    Ferrostar (`Flechas`), con el lado de la circulación del paso de la
+    maniobra (si no viene, por la derecha). En rotondas, el número de salida
+    va en el modificador. La hora de llegada usa la hora local del iPhone,
+    redondeada al minuto. Ritmo como `TRAZO`, y solo si cambian los bytes. Al
+    llegar, con ruta activa y el bit de llegada, hasta pulsar «Terminar» (el
+    cuadro enseña la bandera; a petición del autor); al terminar, uno sin ruta
+    activa.
+  - Escala: `Trazo.nivel`. Una maniobra nueva es otro paso actual: cambia el
+    número de pasos que quedan o el punto del giro.
+  - Cruces: Ferrostar no los conserva en sus rutas. La app decodifica también
+    la respuesta OSRM (la de «Iniciar» y las de los recálculos, que pasan por
+    `ClienteRutas`) y se queda con la ruta cuyo trazado coincide con el del
+    guiado: el mismo número de puntos y todos a menos de 1 m. Cada cruce
+    lleva su posición a lo largo de la ruta (de su `geometry_index`); solo
+    cuentan los que caen por delante de la moto dentro del tramo de `TRAZO`
+    (así no salen los ya pasados ni los de otra pasada por la misma calle) y a
+    menos de 5 m de él, los más cercanos primero, hasta 35 calles o lo que
+    quepa en la conexión.
+  - **Texto junto a la flecha** (a petición del autor: «solo icono y calle /
+    avenida / salida»): ya no la frase de la instrucción, que con calles sin
+    nombre es «Gire a la derecha…», sino `Flechas.nombre`: la vía a la que se
+    entra (el nombre del paso siguiente), «Salida 2» en rotondas, «Salida 23»
+    en salidas numeradas y «Destino» al llegar; sin nombre, nada. Igual en el
+    cartel del iPhone.
+  - Pestaña Placa: filas de `NAV` y `CRUCES`. En el registro solo van
+    secuencias, longitudes y el número de calles.
+- **Supuestos, a ajustar en la moto:**
+  - la tolerancia de 5 m de los cruces;
+  - un código de maniobra desconocido se lee como 0;
+  - sin tramo, los flags de `TRAZO` van a cero, sin escala.
+- **Revisión** (workflow: tres implementadores y tres revisores, con un
+  escéptico por hallazgo): nada grave; uno de gravedad media en el cuadro (la
+  fila de la llegada perdía los km en viajes de más de una hora) y varios
+  menores, corregidos (los cruces, el ritmo de `NAV`, la escala sin tramo, la
+  llegada). Sin probar en el iPhone ni en la placa.
+- **Panel de rutas** (a petición del autor, con vistas previas):
+  - sin destino, el panel solo lleva la fila de botones (y la barra del
+    tiempo, si se abre) y el mapa ocupa el resto; con destino, se despliega
+    hacia arriba con las rutas, al 45 %;
+  - si la de más curvas coincide con la más rápida, su tarjeta sale igual,
+    apagada: «No hay coincidencia con +25 % de tiempo extra», en vez de una
+    tarjeta grande sola.
+- **Cuadro:** se hace en su proyecto (el código no entra en este
+  repositorio): `docs/CAMBIOS_CLAUDE.md`, sección 76.
 
 ### 2026-10-09 · Navegación: servidores, buscador y Ferrostar
 
@@ -668,6 +744,12 @@ Ferrostar:
   - los umbrales de curvas y de tierra (500 m) con rutas conocidas;
   - por qué a veces Valhalla devuelve menos alternativas de las pedidas
     (`alternates` es «como mucho»).
+- Cara de navegación 0.10.0:
+  - los saltos de escala (1000, 500 y 250 m) y que el giro baje sin que el
+    dibujo se acerque;
+  - que los cruces caigan sobre las calles, también tras un recálculo;
+  - las flechas con rutas reales, sobre todo rotondas y cambios de sentido,
+    y la hora de llegada.
 
 ## Fuentes (consultadas el 2026-10-08)
 

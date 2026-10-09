@@ -5,9 +5,10 @@ import UIKit
 import LPRCore
 
 /// Enlace BLE con el cuadro o con el firmware de referencia (docs/PROTOCOLO.md,
-/// v0.5). Manda `MOVIL` (estado de la batería del iPhone; con el cuadro, solo al
-/// cambiar), `NAV_TEXT` (texto de la navegación) y `TRAZO` (tramo de ruta por
-/// delante), y lee `STATUS`. En segundo plano sigue con el modo
+/// v0.6). Manda `MOVIL` (estado de la batería del iPhone; con el cuadro, solo al
+/// cambiar), `NAV_TEXT` (texto de la navegación), `NAV` (siguiente maniobra),
+/// `TRAZO` (tramo de ruta por delante) y, tras cada `TRAZO`, `CRUCES` (calles
+/// que salen del tramo), y lee `STATUS`. En segundo plano sigue con el modo
 /// `bluetooth-central`: cada `STATUS` despierta a la app y sirve de
 /// mantenimiento (§10). Sin restauración de estado.
 ///
@@ -52,6 +53,12 @@ final class EnlaceBLE: NSObject, ObservableObject {
     /// Si se está mandando un tramo de ruta (TRAZO), y el último eco de la placa.
     @Published private(set) var trazoActivo = false
     @Published private(set) var ecoTrazo: UInt8?
+    /// Si se está mandando la siguiente maniobra (NAV), y el último eco de la
+    /// placa.
+    @Published private(set) var navActivo = false
+    @Published private(set) var ecoNav: UInt8?
+    /// El último eco de CRUCES de la placa (van con cada TRAZO).
+    @Published private(set) var ecoCruces: UInt8?
 
     private var central: CBCentralManager?
     private var periferico: CBPeripheral?
@@ -60,22 +67,33 @@ final class EnlaceBLE: NSObject, ObservableObject {
     private var caracMovil: CBCharacteristic?
     private var caracTexto: CBCharacteristic?
     private var caracTrazo: CBCharacteristic?
+    private var caracNav: CBCharacteristic?
+    private var caracCruces: CBCharacteristic?
     private var secuencia = Secuencia()
     /// Cada característica lleva su secuencia (PROTOCOLO.md §3).
     private var secuenciaTexto = Secuencia()
     private var secuenciaTrazo = Secuencia()
+    private var secuenciaNav = Secuencia()
+    private var secuenciaCruces = Secuencia()
     private var textoPendiente = false
     private var trazoPendiente = false
+    private var navPendiente = false
+    private var crucesPendiente = false
     private var primerTextoAnotado = false
     private var primerTrazoAnotado = false
+    private var primerNavAnotado = false
+    private var primerCrucesAnotado = false
     /// Cuándo se mandó por última vez cada característica: el mantenimiento
     /// (§10) repite cada una cuando le toca, no todas a la vez, para que no
     /// salgan en ráfagas (lo vio la revisión de la 0.9.0).
     private var ultimoMovil: Date?
     private var ultimoTexto: Date?
     private var ultimoTrazo: Date?
+    private var ultimoNav: Date?
     /// Hay un tramo más nuevo que el último mandado (llegó antes de 1 s).
     private var trazoNuevo = false
+    /// Hay una maniobra (NAV) distinta de la última mandada (llegó antes de 1 s).
+    private var navNuevo = false
     /// MOVIL al cambiar (v0.5): lo último mandado, y su secuencia mientras la
     /// placa no confirme con el eco que lo ha recibido.
     private var movilEnviado: MensajeMovil?
@@ -105,6 +123,8 @@ final class EnlaceBLE: NSObject, ObservableObject {
     private let uuidMovil = CBUUID(string: Protocolo.UUIDs.movil)
     private let uuidTexto = CBUUID(string: Protocolo.UUIDs.navText)
     private let uuidTrazo = CBUUID(string: Protocolo.UUIDs.trazo)
+    private let uuidNav = CBUUID(string: Protocolo.UUIDs.nav)
+    private let uuidCruces = CBUUID(string: Protocolo.UUIDs.cruces)
 
     override init() {
         super.init()
@@ -315,13 +335,18 @@ final class EnlaceBLE: NSObject, ObservableObject {
         caracMovil = nil
         caracTexto = nil
         caracTrazo = nil
+        caracNav = nil
+        caracCruces = nil
         info = nil
         mantenimiento?.invalidate()
         mantenimiento = nil
         ultimoMovil = nil
         ultimoTexto = nil
         ultimoTrazo = nil
+        ultimoNav = nil
         trazoNuevo = false
+        navNuevo = false
+        crucesDelTrazo = nil
         movilEnviado = nil
         movilPorConfirmar = nil
         ultimoReenvioPedido = nil
@@ -329,8 +354,12 @@ final class EnlaceBLE: NSObject, ObservableObject {
         envioPendiente = false
         textoPendiente = false
         trazoPendiente = false
+        navPendiente = false
+        crucesPendiente = false
         primerTextoAnotado = false
         primerTrazoAnotado = false
+        primerNavAnotado = false
+        primerCrucesAnotado = false
         primerEnvioAnotado = false
         colaLlenaAnotada = false
         primerStatusAnotado = false
@@ -349,7 +378,8 @@ final class EnlaceBLE: NSObject, ObservableObject {
             anotar("La placa no muestra el servicio LPR. Si el iPhone recuerda los servicios antiguos, omite la placa en Ajustes > Bluetooth (PROTOCOLO.md §11)")
             return
         }
-        periferico.discoverCharacteristics([uuidInfo, uuidStatus, uuidMovil, uuidTexto, uuidTrazo], for: servicio)
+        periferico.discoverCharacteristics([uuidInfo, uuidStatus, uuidMovil, uuidTexto, uuidTrazo, uuidNav, uuidCruces],
+                                           for: servicio)
     }
 
     private func caracteristicasDescubiertas(_ periferico: CBPeripheral, servicio: CBService, error: Error?) {
@@ -365,6 +395,8 @@ final class EnlaceBLE: NSObject, ObservableObject {
             case uuidMovil: caracMovil = caracteristica
             case uuidTexto: caracTexto = caracteristica
             case uuidTrazo: caracTrazo = caracteristica
+            case uuidNav: caracNav = caracteristica
+            case uuidCruces: caracCruces = caracteristica
             default: break
             }
         }
@@ -426,6 +458,13 @@ final class EnlaceBLE: NSObject, ObservableObject {
             if let eco = status.ecoTrazo {
                 ecoTrazo = eco
             }
+            if let eco = status.ecoCruces {
+                ecoCruces = eco
+            }
+            // El eco de NAV va siempre (byte 1); solo vale si la placa lo admite
+            if admiteNav {
+                ecoNav = status.ecoNav
+            }
             // Mantenimiento también al recibir STATUS (§10): en segundo plano el
             // temporizador puede no dispararse, y cada aviso de la placa
             // despierta a la app. mantener() solo manda lo que toca, así que
@@ -474,7 +513,8 @@ final class EnlaceBLE: NSObject, ObservableObject {
 
     private func listo() {
         guard let periferico, let info else { return }
-        guard caracStatus != nil || caracMovil != nil || caracTexto != nil else { return }
+        guard caracStatus != nil || caracMovil != nil || caracTexto != nil || caracTrazo != nil || caracNav != nil
+        else { return }
         if let caracStatus {
             ignorarLatencia = true
             periferico.setNotifyValue(true, for: caracStatus)
@@ -483,6 +523,7 @@ final class EnlaceBLE: NSObject, ObservableObject {
         let conMovil = info.capacidades.contains(.movil) && caracMovil != nil
         let conTexto = info.capacidades.contains(.navText) && caracTexto != nil
         let conTrazo = admiteTrazo
+        let conNav = admiteNav
         if !conMovil {
             anotar("La placa no admite MOVIL")
         }
@@ -491,8 +532,13 @@ final class EnlaceBLE: NSObject, ObservableObject {
         }
         if !conTrazo {
             anotar("La placa no admite TRAZO (tramo de ruta)")
+        } else if !admiteCruces {
+            anotar("La placa no admite CRUCES (calles del tramo)")
         }
-        guard conMovil || conTexto || conTrazo else { return }
+        if !conNav {
+            anotar("La placa no admite NAV (siguiente maniobra)")
+        }
+        guard conMovil || conTexto || conTrazo || conNav else { return }
         mantenimiento?.invalidate()
         // Cada 0,5 s se mira qué toca mandar (mantener)
         let temporizador = Timer(timeInterval: Self.tic, repeats: true) { [weak self] _ in
@@ -521,8 +567,9 @@ final class EnlaceBLE: NSObject, ObservableObject {
     /// Lo que toca mandar ahora (§10), sin repetir lo que acaba de salir:
     /// - MOVIL, si ha cambiado la batería, si su eco no ha llegado en 2 s y, con
     ///   una placa sin «MOVIL al cambiar» (v0.5), cada 1,5-2 s;
-    /// - el texto y el tramo, mientras los haya, cada 1,5-2 s; un tramo más
-    ///   nuevo que el mandado, en cuanto pase 1 s desde el anterior (§7 ter).
+    /// - el texto, la maniobra y el tramo, mientras los haya, cada 1,5-2 s; una
+    ///   maniobra o un tramo más nuevos que los mandados, en cuanto pase 1 s
+    ///   desde el anterior (§5 y §7 ter). CRUCES sale con cada TRAZO.
     /// `todo`: al conectar y cuando la placa pide reenvío.
     private func mantener(todo: Bool = false) {
         let ahora = Date()
@@ -539,7 +586,10 @@ final class EnlaceBLE: NSObject, ObservableObject {
         if textoCuadro != nil, todo || pasado(ultimoTexto, Self.repeticion) {
             enviarTexto()
         }
-        if trazoActivo, todo || pasado(ultimoTrazo, Self.repeticion) || (trazoNuevo && pasado(ultimoTrazo, Self.trazoMinimo)) {
+        if navActivo, todo || pasado(ultimoNav, Self.repeticion) || (navNuevo && pasado(ultimoNav, Self.cambioMinimo)) {
+            enviarNav()
+        }
+        if trazoActivo, todo || pasado(ultimoTrazo, Self.repeticion) || (trazoNuevo && pasado(ultimoTrazo, Self.cambioMinimo)) {
             enviarTrazo()
         }
     }
@@ -552,11 +602,12 @@ final class EnlaceBLE: NSObject, ObservableObject {
 
     /// Cada cuánto se mira qué mandar; lo que se repite, a los 1,5 s (con el
     /// tic, cada 1,5-2 s: el mínimo de 2 s de §10 y lejos de los 5 de la
-    /// caducidad); un tramo nuevo, como mucho uno por segundo (§7 ter); MOVIL
-    /// sin eco, a los 2 s; y el reenvío que pide la placa, como mucho cada 0,5 s.
+    /// caducidad); un tramo o una maniobra nuevos, como mucho uno por segundo
+    /// (§5 y §7 ter); MOVIL sin eco, a los 2 s; y el reenvío que pide la placa,
+    /// como mucho cada 0,5 s.
     private static let tic: TimeInterval = 0.5
     private static let repeticion: TimeInterval = 1.5
-    private static let trazoMinimo: TimeInterval = 1
+    private static let cambioMinimo: TimeInterval = 1
     private static let movilSinEco: TimeInterval = 2
     private static let reenvioPedidoMinimo: TimeInterval = 0.5
 
@@ -607,14 +658,95 @@ final class EnlaceBLE: NSObject, ObservableObject {
         }
     }
 
-    // MARK: - Tramo de ruta (TRAZO, PROTOCOLO.md §7 ter)
+    // MARK: - Siguiente maniobra (NAV, PROTOCOLO.md §5)
+
+    /// La última maniobra puesta por Navegacion (la secuencia la pone el enlace
+    /// al mandarla).
+    private var navActual = MensajeNav(secuencia: 0, banderas: [])
+
+    /// Si la placa conectada admite NAV.
+    var admiteNav: Bool {
+        estado == .conectado && caracNav != nil && info?.capacidades.contains(.nav) == true
+    }
+
+    /// Siguiente maniobra (la pone Navegacion en cada posición); nil o sin
+    /// «ruta activa», no hay ruta. Como TRAZO (§5, v0.6): se manda al
+    /// cambiar, como mucho una vez por segundo (lo que llegue antes queda
+    /// guardado y sale en cuanto pase el segundo, con mantener), y se repite
+    /// mientras haya ruta; al dejar de haberla, una vez con el bit 0 a cero
+    /// (con el de llegada, si lo trae).
+    func ponerNav(_ nav: MensajeNav?) {
+        guard var nav, nav.banderas.contains(.rutaActiva) else {
+            guard navActivo else { return }
+            navActivo = false
+            navNuevo = false
+            navActual = nav ?? MensajeNav(secuencia: 0, banderas: [])
+            navActual.secuencia = 0
+            enviarNav()
+            return
+        }
+        nav.secuencia = 0
+        let nuevo = !navActivo
+        // Cambio, solo si cambian los bytes: los Double (distancias, tiempo)
+        // cambian en décimas con cada posición aunque se manden igual (lo vio
+        // la revisión de la 0.10.0)
+        guard nuevo || nav.codificar() != navActual.codificar() else { return }
+        navActual = nav
+        if nuevo { navActivo = true }
+        if nuevo || ultimoNav.map({ Date().timeIntervalSince($0) >= Self.cambioMinimo }) ?? true {
+            enviarNav()
+        } else {
+            navNuevo = true
+        }
+    }
+
+    private func enviarNav() {
+        guard admiteNav, let periferico, let caracNav else { return }
+        guard periferico.canSendWriteWithoutResponse else {
+            // Se manda en cuanto iOS avise de que hay hueco (peripheralIsReady)
+            navPendiente = true
+            return
+        }
+        navPendiente = false
+        var mensaje = navActual
+        mensaje.secuencia = secuenciaNav.siguiente()
+        let bytes = mensaje.codificar()
+        guard bytes.count <= periferico.maximumWriteValueLength(for: .withoutResponse) else {
+            anotar("NAV no cabe en el MTU actual")
+            return
+        }
+        periferico.writeValue(Data(bytes), for: caracNav, type: .withoutResponse)
+        ultimoNav = Date()
+        navNuevo = false
+        if !primerNavAnotado {
+            primerNavAnotado = true
+            // Sin el contenido, como el resto
+            anotar("NAV enviado (seq \(mensaje.secuencia), \(bytes.count) bytes)")
+        }
+    }
+
+    // MARK: - Tramo de ruta (TRAZO, PROTOCOLO.md §7 ter) y cruces (CRUCES, §7 quater)
 
     private var puntosTrazo: [PuntoPlano] = []
     private var giroTrazo: Int?
+    /// Nivel de escala (v0.6): 0 la ajusta la placa; 1-3, 250, 500 y 1000 m.
+    private var escalaTrazo: UInt8 = 0
+    /// Calles de los cruces del último tramo puesto, en sus mismos ejes.
+    private var callesTrazo: [CalleCruce] = []
+    /// Las calles del último TRAZO mandado y su secuencia: CRUCES sale justo
+    /// después con ella. Se guardan aparte porque, si iOS no tiene hueco,
+    /// CRUCES sale más tarde y entretanto puede llegar otro tramo.
+    private var crucesDelTrazo: (trazo: UInt8, calles: [CalleCruce])?
 
     /// Si la placa conectada admite TRAZO: si no, no hace falta calcularlo.
     var admiteTrazo: Bool {
         estado == .conectado && caracTrazo != nil && info?.capacidades.contains(.trazo) == true
+    }
+
+    /// Si la placa conectada admite CRUCES (siempre con TRAZO): si no, no hace
+    /// falta buscarlos.
+    var admiteCruces: Bool {
+        admiteTrazo && caracCruces != nil && info?.capacidades.contains(.cruces) == true
     }
 
     /// Cuántos puntos caben en un TRAZO con la conexión actual (como mucho, 44).
@@ -623,26 +755,36 @@ final class EnlaceBLE: NSObject, ObservableObject {
         return MensajeTrazo.puntosQueCaben(periferico.maximumWriteValueLength(for: .withoutResponse))
     }
 
+    /// Cuántas calles caben en un CRUCES con la conexión actual (como mucho, 35).
+    var callesCrucesQueCaben: Int {
+        guard let periferico, estado == .conectado else { return MensajeCruces.maximoCalles }
+        return MensajeCruces.callesQueCaben(periferico.maximumWriteValueLength(for: .withoutResponse))
+    }
+
     /// Tramo de ruta por delante (lo pone Navegacion en cada posición), en los
-    /// ejes de la moto; nil sin tramo. Se manda al cambiar, como mucho una vez
-    /// por segundo: lo que llegue antes queda guardado y sale en cuanto pase
-    /// el segundo (mantener, cada 0,5 s); al dejar de haberlo, una vez sin
-    /// tramo para borrarlo.
-    func ponerTrazo(_ tramo: (puntos: [PuntoPlano], giro: Int?)?) {
+    /// ejes de la moto, con su nivel de escala y las calles de sus cruces; nil
+    /// sin tramo. Se manda al cambiar, como mucho una vez por segundo: lo que
+    /// llegue antes queda guardado y sale en cuanto pase el segundo (mantener,
+    /// cada 0,5 s); al dejar de haberlo, una vez sin tramo para borrarlo.
+    func ponerTrazo(_ tramo: (puntos: [PuntoPlano], giro: Int?)?, escala: UInt8 = 0, calles: [CalleCruce] = []) {
         guard let tramo, tramo.puntos.count >= 2 else {
             guard trazoActivo else { return }
             trazoActivo = false
             trazoNuevo = false
             puntosTrazo = []
             giroTrazo = nil
+            escalaTrazo = 0
+            callesTrazo = []
             enviarTrazo()
             return
         }
         let nuevo = !trazoActivo
         puntosTrazo = tramo.puntos
         giroTrazo = tramo.giro
+        escalaTrazo = escala
+        callesTrazo = calles
         if nuevo { trazoActivo = true }
-        if nuevo || ultimoTrazo.map({ Date().timeIntervalSince($0) >= Self.trazoMinimo }) ?? true {
+        if nuevo || ultimoTrazo.map({ Date().timeIntervalSince($0) >= Self.cambioMinimo }) ?? true {
             enviarTrazo()
         } else {
             trazoNuevo = true
@@ -658,7 +800,7 @@ final class EnlaceBLE: NSObject, ObservableObject {
         }
         trazoPendiente = false
         let mensaje = MensajeTrazo(secuencia: secuenciaTrazo.siguiente(),
-                                   puntos: trazoActivo ? puntosTrazo : [], giro: giroTrazo)
+                                   puntos: trazoActivo ? puntosTrazo : [], giro: giroTrazo, escala: escalaTrazo)
         let bytes = mensaje.codificar(maximo: periferico.maximumWriteValueLength(for: .withoutResponse))
         periferico.writeValue(Data(bytes), for: caracTrazo, type: .withoutResponse)
         ultimoTrazo = Date()
@@ -667,6 +809,35 @@ final class EnlaceBLE: NSObject, ObservableObject {
             primerTrazoAnotado = true
             // Sin los puntos: son la ruta que se sigue
             anotar("TRAZO enviado (seq \(mensaje.secuencia), \(bytes.count) bytes)")
+        }
+        // Justo después, sus cruces, con su secuencia (§7 quater). Sin tramo no
+        // hacen falta: la placa no dibuja los de otro tramo
+        if trazoActivo && admiteCruces {
+            crucesDelTrazo = (trazo: mensaje.secuencia, calles: callesTrazo)
+            enviarCruces()
+        } else {
+            crucesDelTrazo = nil
+            crucesPendiente = false
+        }
+    }
+
+    private func enviarCruces() {
+        guard admiteCruces, let periferico, let caracCruces, let crucesDelTrazo else { return }
+        guard periferico.canSendWriteWithoutResponse else {
+            // Se manda en cuanto iOS avise de que hay hueco (peripheralIsReady)
+            crucesPendiente = true
+            return
+        }
+        crucesPendiente = false
+        self.crucesDelTrazo = nil
+        let mensaje = MensajeCruces(secuencia: secuenciaCruces.siguiente(), trazo: crucesDelTrazo.trazo,
+                                    calles: crucesDelTrazo.calles)
+        let bytes = mensaje.codificar(maximo: periferico.maximumWriteValueLength(for: .withoutResponse))
+        periferico.writeValue(Data(bytes), for: caracCruces, type: .withoutResponse)
+        if !primerCrucesAnotado {
+            primerCrucesAnotado = true
+            // Sin las posiciones: solo cuántas calles
+            anotar("CRUCES enviado (seq \(mensaje.secuencia), \(bytes[3]) calles, \(bytes.count) bytes)")
         }
     }
 
@@ -715,6 +886,14 @@ final class EnlaceBLE: NSObject, ObservableObject {
         }
         if textoPendiente {
             enviarTexto()
+        }
+        if navPendiente {
+            enviarNav()
+        }
+        // Los cruces que esperaban van antes que un tramo nuevo: son del que
+        // ya tiene la placa
+        if crucesPendiente {
+            enviarCruces()
         }
         if trazoPendiente {
             enviarTrazo()

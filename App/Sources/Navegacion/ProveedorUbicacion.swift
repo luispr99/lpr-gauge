@@ -91,12 +91,23 @@ final class ProveedorUbicacion: NSObject, LocationProviding, CLLocationManagerDe
 }
 
 /// Añade a cada petición de rutas las cabeceras que piden las condiciones de uso
-/// del servidor Valhalla de FOSSGIS (User-Agent y X-Client-Id).
+/// del servidor Valhalla de FOSSGIS (User-Agent y X-Client-Id). Ferrostar pide
+/// por aquí las rutas de los recálculos: se guardan sus cruces para el cuadro
+/// (RutasRecientes, desde la 0.10.0), porque Ferrostar no los conserva.
 struct ClienteRutas: URLRequestLoading {
+    /// Si guarda los cruces de las respuestas correctas. ClienteValhalla no:
+    /// sus rutas propuestas no vienen en formato OSRM, y las de «Iniciar» las
+    /// guarda él.
+    var guardarCruces = true
+
     func loadData(with urlRequest: URLRequest) async throws -> (Data, URLResponse) {
         var peticion = urlRequest
         peticion.setValue(Servidores.identificacion, forHTTPHeaderField: "User-Agent")
         peticion.setValue(Servidores.clienteId, forHTTPHeaderField: "X-Client-Id")
-        return try await URLSession.shared.data(for: peticion)
+        let (datos, respuesta) = try await URLSession.shared.data(for: peticion)
+        if guardarCruces, let http = respuesta as? HTTPURLResponse, (200..<300).contains(http.statusCode) {
+            RutasRecientes.compartida.guardar(datos)
+        }
+        return (datos, respuesta)
     }
 }

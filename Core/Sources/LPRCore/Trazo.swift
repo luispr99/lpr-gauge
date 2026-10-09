@@ -11,12 +11,74 @@ public struct PuntoPlano: Equatable {
     }
 }
 
+/// Un tramo listo para el cuadro (Trazo.tramo).
+public struct TramoTrazo: Equatable {
+    /// Simplificado y en los ejes de la moto (TRAZO).
+    public var puntos: [PuntoPlano]
+    /// Índice del próximo giro en `puntos`, o nil.
+    public var giro: Int?
+    /// La misma ruta sin simplificar, en grados, desde la posición de la moto
+    /// (el primer punto): para buscar los cruces del tramo (Cruces.calles).
+    public var ruta: [PuntoRuta]
+    /// El sentido de la marcha de los ejes de la moto, en grados desde el norte.
+    public var sentido: Double
+
+    public init(puntos: [PuntoPlano], giro: Int?, ruta: [PuntoRuta], sentido: Double) {
+        self.puntos = puntos
+        self.giro = giro
+        self.ruta = ruta
+        self.sentido = sentido
+    }
+}
+
 /// El tramo de ruta por delante que se dibuja en el cuadro (TRAZO,
 /// docs/PROTOCOLO.md §7 ter): desde la posición de la moto sobre la ruta hasta
 /// unos metros por delante, en los ejes de la moto (el sentido de la marcha
 /// hacia arriba) y simplificado para que quepa en un mensaje.
 public enum Trazo {
     static let metrosPorGrado = 111_320.0
+
+    // MARK: Escala por niveles (§7 ter, v0.6)
+
+    /// Metros desde la moto hasta el borde de arriba del dibujo en cada nivel
+    /// de escala (bits 1-2 de los flags de TRAZO): 1 = 250, 2 = 500, 3 = 1000.
+    public static func metros(nivel: Int) -> Double {
+        switch nivel {
+        case ...1: return 250
+        case 2: return 500
+        default: return 1000
+        }
+    }
+
+    /// Metros de ruta que se mandan con cada nivel: 1,25 veces los del nivel,
+    /// para que el tramo llegue hasta arriba del dibujo.
+    public static func metrosTramo(nivel: Int) -> Double {
+        metros(nivel: nivel) * 1.25
+    }
+
+    /// El nivel de escala según los metros que faltan para la maniobra: más de
+    /// 500 m, el 3 (1000 m); de 500 a 200 m, el 2 (500 m); menos de 200 m, el
+    /// 1 (250 m). Antes el tramo se acortaba al acercarse al giro y el cuadro
+    /// se acercaba, y parecía que faltaba más (lo vio el autor el 2026-10-09).
+    /// Dentro de una misma maniobra el nivel solo baja (`anterior`, el que
+    /// llevaba; nil con una maniobra nueva): como mucho hay dos saltos y, entre
+    /// ellos, el giro baja hacia la moto sin cambiar de escala, aunque el GPS
+    /// haga crecer un poco la distancia. Sin distancia (NaN), se queda en el
+    /// anterior.
+    public static func nivel(metrosAlGiro metros: Double, anterior: Int?) -> Int {
+        let segunDistancia: Int
+        if metros.isNaN || metros > 500 {
+            segunDistancia = 3
+        } else if metros >= 200 {
+            segunDistancia = 2
+        } else {
+            segunDistancia = 1
+        }
+        guard let anterior else { return segunDistancia }
+        return min(segunDistancia, max(1, min(3, anterior)))
+    }
+
+    // MARK: Ruta por delante
 
     /// Metros entre dos puntos cercanos (proyección local, como Curvas y
     /// Simplificar).
@@ -126,6 +188,8 @@ public enum Trazo {
     /// actual): su índice en el tramo, si está (a menos de 10 m de un punto de
     /// la ruta). Ese punto se conserva al simplificar: si no, en un giro suave
     /// Douglas-Peucker lo quitaría (lo vio la revisión de la 0.9.1).
+    /// Devuelve también la ruta sin simplificar y el sentido de la marcha,
+    /// para poner los cruces en los mismos ejes (CRUCES, v0.6).
     /// Nil si no hay al menos dos puntos.
     public static func tramo(
         pasos: [[PuntoRuta]],
@@ -135,7 +199,7 @@ public enum Trazo {
         giro: PuntoRuta?,
         anticipacion: Double = 25,
         maximoPuntos: Int = MensajeTrazo.maximoPuntos
-    ) -> (puntos: [PuntoPlano], giro: Int?)? {
+    ) -> TramoTrazo? {
         let ruta = recorrer(pasos: pasos, indice: indice, desde: origen, metros: total)
         guard ruta.count >= 2 else { return nil }
         let sentido = Self.sentido(paso: pasos.first, indice: indice, desde: origen, anticipacion: anticipacion)
@@ -169,7 +233,8 @@ public enum Trazo {
             puntos = Array(puntos.prefix(limite))
             if let g = indiceGiro, g >= limite { indiceGiro = nil }
         }
-        return (aEjesMoto(puntos, origen: origen, rumbo: sentido), indiceGiro)
+        return TramoTrazo(puntos: aEjesMoto(puntos, origen: origen, rumbo: sentido), giro: indiceGiro,
+                          ruta: ruta, sentido: sentido)
     }
 
     /// Douglas-Peucker sin perder el punto `conservando` (el giro): se

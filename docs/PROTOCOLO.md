@@ -1,6 +1,6 @@
 # Protocolo BLE móvil → cuadro
 
-> **Estado: borrador v0.5 (2026-10-09), sin validar.** Los puntos marcados
+> **Estado: borrador v0.6 (2026-10-09), sin validar.** Los puntos marcados
 > **[PENDIENTE]** faltan por completar. Mientras sea borrador, nada de lo que hay
 > aquí es definitivo y puede cambiar sin mantener compatibilidad. Los cambios de
 > cada versión están en la [sección 13](#13-cambios).
@@ -35,6 +35,7 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
 | `CONFIG` | `f4640007-813a-45b8-8ca8-f5f9e18c21d1` | reservado | — | — |
 | `MOVIL` | `f4640008-813a-45b8-8ca8-f5f9e18c21d1` | escritura sin respuesta | cifrado | ≤ 20 B |
 | `TRAZO` | `f4640009-813a-45b8-8ca8-f5f9e18c21d1` | escritura sin respuesta | cifrado | ≤ 180 B (sección 7 ter) |
+| `CRUCES` | `f464000a-813a-45b8-8ca8-f5f9e18c21d1` | escritura sin respuesta | cifrado | ≤ 179 B (sección 7 quater) |
 
 - **Anuncio:** el UUID del servicio va en el **paquete principal**, no en la
   respuesta de escaneo. iOS, en segundo plano, solo encuentra periféricos
@@ -54,8 +55,8 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
   así que un rechazo no avisaría a iOS de que tiene que cifrar.
 - **Mensajes de 20 bytes como máximo:** caben con el MTU mínimo (23). Aun así, la
   app consulta `maximumWriteValueLength(for:)` en tiempo de ejecución. Las
-  excepciones son `NAV_TEXT` (sección 7 bis) y `TRAZO` (sección 7 ter), que se
-  ajustan al MTU de la conexión.
+  excepciones son `NAV_TEXT` (sección 7 bis), `TRAZO` (sección 7 ter) y
+  `CRUCES` (sección 7 quater), que se ajustan al MTU de la conexión.
 
 ## 3. Reglas comunes de codificación
 
@@ -77,7 +78,7 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
 |---|---|---|---|
 | 0 | versión | u8 | Versión del protocolo del dispositivo: 1. |
 | 1 | tipo | u8 | 1 = cuadro de moto; 2 = firmware de referencia (solo serie). |
-| 2-3 | capacidades | u16 | Bit 0 `NAV`, bit 1 `GPS`, bit 2 `STATUS`, bit 3 `NAV_TEXT`, bit 4 `CONFIG`, bit 5 `MOVIL`, bit 6 `TRAZO`, bit 7 `MOVIL` al cambiar (sección 7). |
+| 2-3 | capacidades | u16 | Bit 0 `NAV`, bit 1 `GPS`, bit 2 `STATUS`, bit 3 `NAV_TEXT`, bit 4 `CONFIG`, bit 5 `MOVIL`, bit 6 `TRAZO`, bit 7 `MOVIL` al cambiar (sección 7), bit 8 `CRUCES`. |
 | 4 | frecuencia máxima | u8 | Mensajes por segundo y característica que acepta (0 = sin límite). |
 | 5-7 | versión de firmware | u8 × 3 | Mayor, menor, parche. |
 
@@ -96,14 +97,30 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
 | 4 | modificador | u8 | 0 | En rotondas, número de salida (1-n). |
 | 5-6 | distancia | u16 | `0xFFFF` | Metros hasta la maniobra; satura en 65 534. |
 | 7-8 | ángulo | i16 | `0x7FFF` | Ángulo de giro en grados, de -180 a 180, positivo a la derecha. |
+| 9-10 | distancia restante | u16 | `0xFFFF` | Hasta el destino, en decenas de metros; satura en 65 534 (añadido en la v0.6). |
+| 11-12 | tiempo restante | u16 | `0xFFFF` | Hasta el destino, en minutos, redondeado (v0.6). |
+| 13-14 | llegada | u16 | `0xFFFF` | Hora de llegada prevista, en minutos desde la medianoche, con la hora local del móvil: 0-1439 (v0.6). |
+| 15-16 | longitud del paso | u16 | `0xFFFF` | Metros del paso actual entero, de la maniobra anterior a la siguiente; satura en 65 534 (v0.6). Con la distancia, da el avance hacia la maniobra. |
 
-- Longitud mínima: 9 bytes.
+- Longitud mínima: 9 bytes. Los campos de la v0.6 están si el mensaje tiene 17
+  bytes o más; si no, son desconocidos.
 - Sin ruta activa, la app manda `NAV` con el bit 0 a cero y el cuadro deja de
   mostrar la flecha.
-- El **ángulo** permite dibujar la flecha aunque el código sea genérico. Lo
-  calcula la app a partir de la geometría de la ruta.
+- **Al llegar** (v0.6, a petición del autor: la bandera al terminar), la app
+  sigue mandando `NAV` con los bits 0 y 3 a uno, el código 5 (llegada) y
+  distancia 0, hasta que se termina la ruta; entonces, uno con el bit 0 a cero.
+  El cuadro enseña una bandera a cuadros grande y «Has llegado».
+- El **ángulo** permite dibujar la flecha aunque el código sea genérico (sección
+  8). Desde la v0.6 la app lo saca del modificador de la maniobra con valores
+  nominales: recto 0, ligero ±45, normal ±90, cerrado ±135 y cambio de sentido
+  ±180 (el signo, el lado). En rotondas es la dirección de la salida respecto a
+  la de entrada; con circulación por la derecha, 180 menos los grados que se
+  recorren dentro (90 recorridos: +90, a la derecha; 180: 0; 270: -90).
 - El **cuadro decide cómo mostrar la distancia** (por ejemplo, «200 m» o
   «1,2 km»). La app manda siempre metros.
+- **Ritmo (v0.6):** como `TRAZO`: al cambiar, como mucho una vez por segundo, y
+  repetido a los 1,5-2 s mientras haya ruta. Al acabar la ruta, uno con el bit 0
+  a cero. Caduca a los 5 s.
 
 ## 6. `GPS` (escritura sin respuesta): altitud y estado del GPS
 
@@ -177,7 +194,7 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
 |---|---|---|---|
 | 0 | versión | u8 | 1 |
 | 1 | secuencia | u8 | |
-| 2 | flags | u8 | Bit 0: hay tramo. A cero, el dispositivo deja de dibujarlo (fuera de ruta, recalculando o sin ruta). |
+| 2 | flags | u8 | Bit 0: hay tramo. A cero, el dispositivo deja de dibujarlo (fuera de ruta, recalculando o sin ruta). Bits 1-2 (v0.6): escala, los metros desde la moto hasta el borde de arriba del dibujo: 0 la ajusta el dispositivo al tramo (como en la v0.4), 1 = 250 m, 2 = 500 m, 3 = 1000 m. |
 | 3 | giro | u8 | Índice, en la lista de puntos, del próximo giro; 255 si no está en el tramo. |
 | 4… | puntos | (i16, i16) × n | Metros desde la moto, con el sentido de la marcha hacia arriba: x a la derecha e y hacia delante. El primero es la posición de la moto sobre la ruta, (0, 0). |
 
@@ -189,21 +206,65 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
   conexión (`maximumWriteValueLength(for: .withoutResponse)`; con el MTU mínimo,
   4 puntos). La app simplifica el tramo para que quepa.
 - **Qué tramo:** la app manda la ruta desde la posición de la moto hasta unos
-  metros por delante que decide ella (más cerca del giro, menos metros: así el
-  dispositivo, que ajusta la escala al tramo, se acerca al llegar al giro). El
-  sentido de la marcha es el rumbo de la ruta unos metros por delante, no el
-  del GPS.
+  metros por delante que decide ella. El sentido de la marcha es el rumbo de la
+  ruta unos metros por delante, no el del GPS.
+- **Escala por niveles (v0.6, elegida por el autor el 2026-10-09).** Antes, el
+  tramo se acortaba al acercarse al giro y el dispositivo ajustaba la escala:
+  el dibujo se acercaba y parecía que faltaba más.
+  - La app elige el nivel según lo que falte para la maniobra: más de 500 m,
+    1000 m; de 500 a 200 m, 500 m; menos de 200 m, 250 m.
+  - Durante una misma maniobra el nivel solo baja, así que hay como mucho dos
+    saltos. Entre saltos, el giro baja hacia la moto sin cambiar de escala.
+  - Con la maniobra siguiente, se elige de nuevo.
+  - La app manda 1,25 veces los metros del nivel, para que el tramo llegue
+    hasta arriba.
 - **Ritmo:** la app lo manda al cambiar, como mucho una vez por segundo (uno
   que llegue antes sale en cuanto pasa el segundo), y lo repite a los 1,5-2 s
   mientras haya tramo. Al dejar de haberlo manda uno con el
   bit 0 a cero. El dispositivo lo da por caducado a los 5 s.
 
+## 7 quater. `CRUCES` (escritura sin respuesta): calles que salen del tramo
+
+| Byte | Campo | Tipo | Descripción |
+|---|---|---|---|
+| 0 | versión | u8 | 1 |
+| 1 | secuencia | u8 | |
+| 2 | trazo | u8 | Secuencia del `TRAZO` al que acompaña: el dispositivo solo los dibuja con ese tramo. |
+| 3 | n | u8 | Número de calles, de 0 a 35. |
+| 4… | calles | (i16, i16, u8) × n | Por cada calle, el cruce en metros, en los mismos ejes que `TRAZO` (x a la derecha, y hacia delante, la moto en (0, 0)), y su dirección en 1/256 de vuelta, en sentido horario desde «hacia delante»: 0 delante, 64 derecha, 128 atrás, 192 izquierda. |
+
+- Longitud mínima: 4 bytes. Como mucho 35 calles (179 bytes) y nunca más de lo
+  que admita la conexión.
+- Añadido en la v0.6 (2026-10-09), a petición del autor, para distinguir
+  carreteras en el dibujo, como en la imagen de Beeline que pasó. El
+  dispositivo dibuja un trozo corto de cada calle, desde el cruce hacia su
+  dirección.
+- **De dónde sale:** Valhalla, con formato OSRM, da en cada paso los cruces
+  (`intersections`): su posición y los rumbos de todas las calles que salen de
+  él (`bearings`), con la de llegada (`in`) y la de salida (`out`). Las calles
+  que se dibujan son las demás. Comprobado con una consulta a
+  valhalla1.openstreetmap.de el 2026-10-09.
+- **Cuáles:** los cruces que quedan sobre el tramo de `TRAZO`, los más cercanos
+  a la moto primero.
+- **Ritmo:** la app lo manda justo después de cada `TRAZO` con tramo, con la
+  secuencia de ese `TRAZO`. Tras un `TRAZO` sin tramo no se manda: los cruces
+  caducan con su `TRAZO`.
+
 ## 8. Códigos de maniobra
 
-**[PENDIENTE]** Ferrostar entrega cada maniobra como tipo y modificador al estilo
-OSRM (ver `DECISIONES.md`, «Maniobras: lo comprobado»). La tabla se definirá a
-partir de ellos. Queda por decidir si sigue siendo un superconjunto de los
-códigos 0-30 de *Komoot BLE Connect*, como se planteó al principio.
+Definidos en la v0.6 (2026-10-09). Tabla propia y corta: la forma de la flecha
+la da el ángulo de `NAV` (sección 5). Ya no se intenta seguir los códigos
+0-30 de *Komoot BLE Connect*.
+
+| Código | Maniobra | Ferrostar (tipo y modificador, al estilo OSRM) |
+|---|---|---|
+| 0 | desconocida (sin flecha) | sin maniobra |
+| 1 | recto | modificador «straight» o sin modificador, salvo los de abajo |
+| 2 | giro (el ángulo dice a qué lado y cuánto) | modificadores «slight»/«sharp»/normal a derecha o izquierda; también bifurcaciones, incorporaciones, rampas y finales de vía |
+| 3 | rotonda (modificador: número de salida; ángulo: dirección de salida) | tipos «roundabout», «rotary», «roundabout turn», «exit roundabout» y «exit rotary» |
+| 4 | cambio de sentido (el signo del ángulo, el lado) | modificador «uturn» |
+| 5 | llegada | tipo «arrive» |
+| 6 | salida (inicio de la ruta) | tipo «depart» |
 
 ## 9. `STATUS` (lectura y notificación)
 
@@ -216,11 +277,12 @@ códigos 0-30 de *Komoot BLE Connect*, como se planteó al principio.
 | 4 | eco `MOVIL` | u8 | Última secuencia de `MOVIL` recibida (añadido en la v0.2). |
 | 5 | eco `NAV_TEXT` | u8 | Última secuencia de `NAV_TEXT` recibida (añadido en la v0.3). |
 | 6 | eco `TRAZO` | u8 | Última secuencia de `TRAZO` recibida (añadido en la v0.4). |
+| 7 | eco `CRUCES` | u8 | Última secuencia de `CRUCES` recibida (añadido en la v0.6). |
 
 - Longitud mínima: 4 bytes. Un `STATUS` de 4 bytes viene de un dispositivo
   anterior a la v0.2 y no trae eco de `MOVIL`; uno de 5, de uno anterior a la
   v0.3, sin eco de `NAV_TEXT`; uno de 6, de uno anterior a la v0.4, sin eco de
-  `TRAZO`.
+  `TRAZO`; uno de 7, de uno anterior a la v0.6, sin eco de `CRUCES`.
 - Mientras no ha recibido nada de una característica, su eco vale 0.
 - El dispositivo notifica `STATUS` al suscribirse la app, después de cada
   escritura recibida y, como mínimo, cada 2 s.
@@ -236,7 +298,8 @@ códigos 0-30 de *Komoot BLE Connect*, como se planteó al principio.
   frecuencia.
 - La app manda `NAV`, `GPS` y `MOVIL` en cada cambio y, como mínimo, cada 2 s
   (mantenimiento), aunque no cambie nada. `NAV_TEXT` y `TRAZO`, igual mientras
-  haya texto o tramo (secciones 7 bis y 7 ter). Excepción: `MOVIL` con un
+  haya texto o tramo (secciones 7 bis y 7 ter); `NAV` y `TRAZO`, como mucho
+  una vez por segundo; `CRUCES`, con cada `TRAZO`. Excepción: `MOVIL` con un
   dispositivo que anuncia el bit 7, solo al cambiar (sección 7).
 - La app mira cada 0,5 s qué toca mandar y repite cada característica a los
   1,5 s de su último envío, cada una por su cuenta: así no salen en ráfagas.
@@ -276,7 +339,6 @@ códigos 0-30 de *Komoot BLE Connect*, como se planteó al principio.
 
 ## 12. Pendiente
 
-- Tabla de maniobras (sección 8).
 - Parámetros de conexión que pida el cuadro. En el planteamiento inicial:
   intervalo de 30-60 ms, latencia 4 y *timeout* de 4 s, a medir con el eco de
   `STATUS`.
@@ -284,6 +346,13 @@ códigos 0-30 de *Komoot BLE Connect*, como se planteó al principio.
 
 ## 13. Cambios
 
+- **v0.6 (2026-10-09):** para la cara de navegación nueva del cuadro (pedida
+  por el autor con una imagen de Beeline): `NAV` completo, con la tabla de
+  maniobras (sección 8), la distancia y el tiempo restantes, la hora de
+  llegada y la longitud del paso (sección 5); escala por niveles en los bits
+  1-2 de los flags de `TRAZO` (sección 7 ter); característica `CRUCES`
+  (sección 7 quater, bit 8 de capacidades); eco de `CRUCES` en el byte 7 de
+  `STATUS`. La versión del formato sigue siendo 1.
 - **v0.5 (2026-10-09):** bit 7 de capacidades, `MOVIL` al cambiar: con él, la
   app manda `MOVIL` solo cuando cambia (con confirmación por el eco) y el
   dispositivo lo da por bueno mientras dure la conexión (sección 7). Antes,

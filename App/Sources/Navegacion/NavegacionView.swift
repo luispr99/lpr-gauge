@@ -51,6 +51,9 @@ struct NavegacionView: View {
 
     // MARK: - Exploración: mapa, búsqueda y rutas
 
+    /// Con destino, el panel se despliega hacia arriba con las rutas.
+    private var conDestino: Bool { navegacion.destino != nil }
+
     private var exploracion: some View {
         GeometryReader { geometria in
             let anchura = geometria.size.width
@@ -72,13 +75,18 @@ struct NavegacionView: View {
                         avisosExploracion
                             .padding(8)
                     }
-                    // Mientras se escribe, todo para el mapa y las sugerencias
-                    .frame(height: escribiendo ? alto : alto * partePantallaMapa)
+                    // Mientras se escribe, todo para el mapa y las sugerencias.
+                    // Sin destino, el mapa se queda con todo lo que no ocupe el
+                    // panel, que solo lleva los botones (a petición del autor,
+                    // 2026-10-09, con vista previa); con destino, el 55 %
+                    .frame(height: escribiendo ? alto : (conDestino ? alto * partePantallaMapa : nil))
+                    .frame(maxHeight: .infinity)
                 if !escribiendo {
                     panelInferior
-                        .frame(height: alto * (1 - partePantallaMapa))
+                        .frame(height: conDestino ? alto * (1 - partePantallaMapa) : nil)
                 }
             }
+            .animation(.easeInOut(duration: 0.25), value: conDestino)
         }
         .onChange(of: navegacion.consulta) { _, _ in
             navegacion.consultaCambiada()
@@ -186,10 +194,11 @@ struct NavegacionView: View {
     // MARK: - Panel de abajo
 
     /// Arriba, los botones de peajes, autovías y tiempo extra, en una línea. Sin
-    /// destino, solo eso (y la barra del tiempo, si se abre). Con destino,
-    /// debajo, las rutas (o la barra del tiempo extra, si se abre, en su sitio)
-    /// y los botones de cancelar e iniciar. Diseño aprobado por el autor el
-    /// 2026-10-09 con vistas previas (0.9.4).
+    /// destino, solo eso (y la barra del tiempo, si se abre), con el alto justo:
+    /// el resto es mapa (0.10.0). Con destino, se despliega hacia arriba con las
+    /// rutas (o la barra del tiempo extra, si se abre, en su sitio) y los
+    /// botones de cancelar e iniciar. Diseño aprobado por el autor el
+    /// 2026-10-09 con vistas previas.
     private var panelInferior: some View {
         VStack(spacing: 8) {
             filaOpciones
@@ -197,20 +206,18 @@ struct NavegacionView: View {
                 barraMargen
                     .transition(.opacity)
             }
-            if navegacion.destino != nil {
+            if conDestino {
                 if !mostrarMargen {
                     rutasPropuestas
                 }
                 botonesRuta
-            } else {
-                Spacer(minLength: 0)
             }
             atribucion
         }
         .padding(.horizontal)
         .padding(.top, 10)
         .padding(.bottom, 6)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: conDestino ? .infinity : nil, alignment: .top)
         .background(.regularMaterial)
     }
 
@@ -327,10 +334,20 @@ struct NavegacionView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            // Mientras se prepara la navegación, la elegida no se cambia
+            // Mientras se prepara la navegación, la elegida no se cambia. Si la
+            // de más curvas es la misma que la más rápida (no hay otra dentro
+            // del tiempo extra), su tarjeta sale igual, vacía: «No hay
+            // coincidencia» (a petición del autor, 2026-10-09: sin una tarjeta
+            // grande sola). La más rápida lleva entonces solo su nombre
+            let sinCurvasAparte = navegacion.variantes.contains {
+                $0.tipos.contains(.rapida) && $0.tipos.contains(.divertida)
+            }
             VStack(spacing: 8) {
                 ForEach(navegacion.variantes) { variante in
-                    tarjetaVariante(variante)
+                    tarjetaVariante(variante, nombre: sinCurvasAparte ? variante.tipo.nombre : variante.nombre)
+                }
+                if sinCurvasAparte {
+                    tarjetaSinCoincidencia(.divertida)
                 }
             }
             .frame(maxHeight: .infinity, alignment: .top)
@@ -344,7 +361,7 @@ struct NavegacionView: View {
     /// avisos quedan menos líneas y todas las tarjetas miden lo mismo. A la
     /// derecha, en grande, el tiempo, en el sitio de la antigua marca de
     /// elegida (la elegida se distingue por el borde y el fondo).
-    private func tarjetaVariante(_ variante: VarianteRuta) -> some View {
+    private func tarjetaVariante(_ variante: VarianteRuta, nombre: String) -> some View {
         let esElegida = variante.tipos.contains(navegacion.elegida)
         let tono = color(variante.tipo)
         let lista = avisos(variante)
@@ -361,7 +378,7 @@ struct NavegacionView: View {
                     .background(tono, in: Circle())
                 VStack(alignment: .leading, spacing: 0) {
                     Spacer(minLength: 0)
-                    Text(verbatim: variante.nombre)
+                    Text(verbatim: nombre)
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
@@ -414,6 +431,44 @@ struct NavegacionView: View {
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(esElegida ? .isSelected : [])
+    }
+
+    /// Tarjeta de un papel sin ruta propia (la de más curvas, cuando coincide
+    /// con la más rápida): del mismo alto que las demás, apagada y sin pulsar,
+    /// con «No hay coincidencia» y el tiempo extra con el que se ha buscado.
+    private func tarjetaSinCoincidencia(_ tipo: TipoVariante) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: tipo.icono)
+                .font(.title3)
+                .foregroundStyle(.white)
+                .frame(width: 38, height: 38)
+                .background(color(tipo).opacity(0.4), in: Circle())
+            VStack(alignment: .leading, spacing: 0) {
+                Spacer(minLength: 0)
+                Text(verbatim: tipo.nombre)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Spacer(minLength: 0)
+                Text("No hay coincidencia con \(textoMargen) de tiempo extra")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                Spacer(minLength: 0)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .frame(maxHeight: .infinity)
+        .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(Color.secondary.opacity(0.25), style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
+        )
+        .accessibilityElement(children: .combine)
     }
 
     /// «1 h 26 min» en dos renglones («1 h» y «26 min»); con menos de una hora,
@@ -623,11 +678,8 @@ struct NavegacionView: View {
                             .font(.system(size: 40, weight: .bold, design: .rounded))
                             .monospacedDigit()
                     }
-                    if let salida = navegacion.maniobra?.salidaRotonda {
-                        Text("Salida \(Int(salida))")
-                            .font(.headline)
-                    }
-                    if let texto = navegacion.maniobra?.texto {
+                    // Solo la vía o la salida, como en el cuadro (Flechas.nombre)
+                    if let texto = navegacion.maniobra?.texto, !texto.isEmpty {
                         Text(verbatim: texto)
                             .font(.headline)
                             .lineLimit(2)

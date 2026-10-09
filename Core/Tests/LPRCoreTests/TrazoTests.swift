@@ -71,6 +71,12 @@ final class TrazoTests: XCTestCase {
         XCTAssertEqual(tramo.puntos[1].y, 250, accuracy: 0.5)
         XCTAssertEqual(tramo.puntos[2].x, 250, accuracy: 0.5)
         XCTAssertEqual(tramo.puntos[2].y, 250, accuracy: 0.5)
+        // Para los cruces: la ruta sin simplificar desde la moto (origen, los
+        // tres vértices hacia el norte, dos hacia el este y el corte) y el
+        // sentido de la marcha (norte)
+        XCTAssertEqual(tramo.ruta.count, 7)
+        XCTAssertEqual(tramo.ruta.first, punto(0, 50))
+        XCTAssertEqual(tramo.sentido, 0, accuracy: 0.1)
     }
 
     func testTramoCabeEnElMaximo() {
@@ -128,5 +134,44 @@ final class TrazoTests: XCTestCase {
 
     func testSinRutaPorDelante() {
         XCTAssertNil(Trazo.tramo(pasos: [], indice: nil, desde: punto(0, 0), metros: 500, giro: nil))
+    }
+
+    // MARK: Escala por niveles (v0.6)
+
+    func testNivelSegunLaDistancia() {
+        XCTAssertEqual(Trazo.nivel(metrosAlGiro: 1_200, anterior: nil), 3)
+        XCTAssertEqual(Trazo.nivel(metrosAlGiro: 500.1, anterior: nil), 3)
+        XCTAssertEqual(Trazo.nivel(metrosAlGiro: 500, anterior: nil), 2)
+        XCTAssertEqual(Trazo.nivel(metrosAlGiro: 200, anterior: nil), 2)
+        XCTAssertEqual(Trazo.nivel(metrosAlGiro: 199.9, anterior: nil), 1)
+        XCTAssertEqual(Trazo.nivel(metrosAlGiro: 0, anterior: nil), 1)
+        XCTAssertEqual(Trazo.nivel(metrosAlGiro: .nan, anterior: nil), 3)
+    }
+
+    func testNivelSoloBajaEnLaMismaManiobra() {
+        // Acercándose a un giro: dos saltos, y el GPS que hace crecer un poco
+        // la distancia no lo hace subir
+        var nivel: Int? = nil
+        var niveles: [Int] = []
+        for metros in [1_500.0, 600, 499, 510, 230, 199, 230, 5] {
+            let nuevo = Trazo.nivel(metrosAlGiro: metros, anterior: nivel)
+            niveles.append(nuevo)
+            nivel = nuevo
+        }
+        XCTAssertEqual(niveles, [3, 3, 2, 2, 2, 1, 1, 1])
+        XCTAssertEqual(Trazo.nivel(metrosAlGiro: 800, anterior: 2), 2)
+        XCTAssertEqual(Trazo.nivel(metrosAlGiro: 450, anterior: 3), 2)
+        XCTAssertEqual(Trazo.nivel(metrosAlGiro: .nan, anterior: 2), 2)
+        // Con la maniobra siguiente (anterior nil) se elige de nuevo
+        XCTAssertEqual(Trazo.nivel(metrosAlGiro: 2_000, anterior: nil), 3)
+    }
+
+    func testMetrosDeCadaNivel() {
+        XCTAssertEqual(Trazo.metros(nivel: 1), 250)
+        XCTAssertEqual(Trazo.metros(nivel: 2), 500)
+        XCTAssertEqual(Trazo.metros(nivel: 3), 1_000)
+        // Se mandan 1,25 veces, para que el tramo llegue hasta arriba
+        XCTAssertEqual(Trazo.metrosTramo(nivel: 1), 312.5)
+        XCTAssertEqual(Trazo.metrosTramo(nivel: 3), 1_250)
     }
 }

@@ -102,8 +102,10 @@ struct VarianteRuta: Identifiable {
 /// Busca el destino con Apple Maps, propone rutas en moto según las
 /// preferencias (peajes, autopistas, asfalto y margen de tiempo) y, al iniciar,
 /// publica la maniobra, los metros que faltan y la altitud del GPS. Al cuadro
-/// le pasa el texto (NAV_TEXT) y el tramo de ruta (TRAZO) por el enlace, y el
-/// guiado sigue en segundo plano y con la pantalla bloqueada (desde la 0.9.0).
+/// le pasa por el enlace el texto (NAV_TEXT), la siguiente maniobra (NAV), el
+/// tramo de ruta con su escala (TRAZO) y las calles de sus cruces (CRUCES,
+/// desde la 0.10.0), y el guiado sigue en segundo plano y con la pantalla
+/// bloqueada (desde la 0.9.0).
 @MainActor
 final class Navegacion: ObservableObject {
     // MARK: Búsqueda
@@ -177,9 +179,17 @@ final class Navegacion: ObservableObject {
     /// Texto para la cara de navegación del cuadro (NAV_TEXT): la distancia al
     /// giro y, debajo, la instrucción; nil sin guiado.
     @Published private(set) var textoCuadro: String?
-    /// El enlace con el cuadro (lo pone ContentView). El texto y el trazo se le
-    /// pasan directamente desde aquí, también con la app en segundo plano
+    /// El enlace con el cuadro (lo pone ContentView). El texto, la maniobra, el
+    /// trazo y los cruces se le pasan directamente desde aquí, también con la
+    /// app en segundo plano
     weak var enlace: EnlaceBLE?
+    /// Escala del tramo del cuadro (TRAZO, §7 ter): el nivel y la maniobra para
+    /// la que se eligió; con otra maniobra se elige de nuevo.
+    private var nivelEscala: Int?
+    private var maniobraEscala: ClaveManiobra?
+    /// La ruta del guiado con sus cruces, para el cuadro (CRUCES): la de la
+    /// respuesta en formato OSRM con el mismo trazado (RutasRecientes).
+    private var rutaCruces: RutaConCruces?
 
     /// Para el mapa del guiado: la ruta, la posición (ajustada a la ruta si se va
     /// por ella), el rumbo y el punto del próximo giro.
@@ -614,7 +624,12 @@ final class Navegacion: ObservableObject {
         geometriaRuta = []
         textoCuadro = nil
         enlace?.ponerTextoNavegacion(nil)
+        enlace?.ponerNav(nil)
         enlace?.ponerTrazo(nil)
+        nivelEscala = nil
+        maniobraEscala = nil
+        rutaCruces = nil
+        RutasRecientes.compartida.olvidar()
         posicionEnRuta = nil
         rumbo = nil
         puntoGiro = nil
@@ -664,22 +679,35 @@ final class Navegacion: ObservableObject {
         if let visual = estado.currentVisualInstruction {
             let principal = visual.primaryContent
             // Según el código de Valhalla, el número de salida de la próxima
-            // rotonda va en el paso siguiente (sin probar con una ruta real)
-            let salida = (estado.remainingSteps?.dropFirst().first)?.roundaboutExitNumber
+            // rotonda va en el paso siguiente (sin probar con una ruta real).
+            // El lado de la circulación, también del paso de la maniobra
+            let siguiente = estado.remainingSteps?.dropFirst().first
             maniobra = Maniobra(
                 tipo: principal.maneuverType,
                 modificador: principal.maneuverModifier,
                 gradosRotonda: principal.roundaboutExitDegrees,
-                salidaRotonda: salida,
-                texto: principal.text
+                salidaRotonda: siguiente?.roundaboutExitNumber,
+                ladoCirculacion: siguiente?.drivingSide ?? estado.currentStep?.drivingSide,
+                // Solo la vía, la salida o «Destino», no la frase de la
+                // instrucción (Flechas.nombre). La vía, la del paso siguiente
+                texto: Flechas.nombre(
+                    tipo: principal.maneuverType,
+                    salidaRotonda: siguiente?.roundaboutExitNumber,
+                    salidas: principal.exitNumbers.isEmpty ? (siguiente?.exits ?? []) : principal.exitNumbers,
+                    via: siguiente?.roadName
+                )
             )
         }
 
-        // Datos del mapa. La geometría solo cambia al recalcular la ruta
+        // Datos del mapa. La geometría solo cambia al recalcular la ruta. Con
+        // ella cambian los cruces: los de la respuesta con el mismo trazado
+        // (si no aparece, sin cruces)
         let ruta = estado.routeGeometry
         if ruta != geometriaGuiado {
             geometriaGuiado = ruta
             geometriaRuta = ruta.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lng) }
+            let puntos = ruta.map { PuntoRuta(latitud: $0.lat, longitud: $0.lng) }
+            rutaCruces = Cruces.buscar(puntos, en: RutasRecientes.compartida.todas())
         }
         if let yo = estado.preferredUserLocation {
             posicionEnRuta = CLLocationCoordinate2D(latitude: yo.coordinates.lat, longitude: yo.coordinates.lng)
@@ -712,7 +740,8 @@ final class Navegacion: ObservableObject {
         } else if fueraDeRuta {
             texto = "Fuera de ruta"
         } else if let maniobra {
-            texto = [metrosAlGiro.map { Flechas.distancia($0) }, maniobra.texto]
+            // La distancia y, en otra línea, la vía (si la tiene)
+            texto = [metrosAlGiro.map { Flechas.distancia($0) }, maniobra.texto.isEmpty ? nil : maniobra.texto]
                 .compactMap { $0 }
                 .joined(separator: "\n")
         } else {
@@ -724,25 +753,87 @@ final class Navegacion: ObservableObject {
             textoCuadro = texto
             enlace?.ponerTextoNavegacion(texto)
         }
+        // También directamente: la siguiente maniobra (NAV), el tramo con su
+        // escala (TRAZO) y las calles de sus cruces (CRUCES)
         if let enlace {
-            enlace.ponerTrazo(enlace.admiteTrazo
-                ? trazoParaCuadro(estado, maximoPuntos: enlace.puntosTrazoQueCaben)
-                : nil)
+            enlace.ponerNav(navParaCuadro(estado))
+            if enlace.admiteTrazo,
+               let calculo = trazoParaCuadro(estado, maximoPuntos: enlace.puntosTrazoQueCaben) {
+                // Solo los cruces de este trozo de la ruta entera: desde la moto
+                // (lo que falta, restado de la longitud) hasta el final del tramo
+                let ventana: ClosedRange<Double>? = rutaCruces.flatMap { ruta in
+                    estado.currentProgress.map { progreso in
+                        let moto = max(0, ruta.longitud - progreso.distanceRemaining)
+                        return moto...(moto + Trazo.metrosTramo(nivel: calculo.nivel))
+                    }
+                }
+                let calles = enlace.admiteCruces
+                    ? Cruces.calles(de: rutaCruces?.cruces ?? [], ruta: calculo.tramo.ruta,
+                                    sentido: calculo.tramo.sentido, maximo: enlace.callesCrucesQueCaben,
+                                    ventana: ventana)
+                    : []
+                enlace.ponerTrazo((puntos: calculo.tramo.puntos, giro: calculo.tramo.giro),
+                                  escala: UInt8(calculo.nivel), calles: calles)
+            } else {
+                enlace.ponerTrazo(nil)
+            }
         }
     }
 
-    /// Metros de ruta por delante que se mandan al cuadro: hasta 150 m después
-    /// del próximo giro, entre 250 y 1000 (supuesto, a ajustar en la moto). Así,
-    /// al acercarse al giro el cuadro se acerca, porque ajusta la escala al
-    /// tramo.
-    private static func metrosTrazo(alGiro metros: Double) -> Double {
-        min(1_000, max(250, metros + 150))
+    /// La siguiente maniobra para el cuadro (NAV, §5 y §8): código y ángulo de
+    /// la flecha (Flechas), distancias, tiempo y hora de llegada. Nil sin
+    /// guiado. Al llegar, con «ruta activa» y el bit de llegada, código de
+    /// llegada y distancia 0, hasta pulsar «Terminar»: el cuadro enseña la
+    /// bandera (a petición del autor, 2026-10-09; §5). Al terminar, nil: el
+    /// enlace manda uno sin ruta activa.
+    private func navParaCuadro(_ estado: NavigationState) -> MensajeNav? {
+        guard navegando else { return nil }
+        if llegada {
+            return MensajeNav(secuencia: 0, banderas: [.rutaActiva, .llegada], maniobra: .llegada, distancia: 0)
+        }
+        guard case let .navigating(currentStepGeometryIndex: _, userLocation: _, snappedUserLocation: _,
+                                   remainingSteps: pasos, remainingWaypoints: _, progress: progreso, summary: _,
+                                   deviation: _, visualInstruction: _, spokenInstruction: _,
+                                   annotationJson: _) = estado.tripState
+        else { return nil }
+        var banderas: BanderasNav = [.rutaActiva]
+        if recalculando { banderas.insert(.recalculando) }
+        if fueraDeRuta { banderas.insert(.fueraDeRuta) }
+        let codigo = Flechas.codigo(maniobra)
+        return MensajeNav(
+            secuencia: 0,
+            banderas: banderas,
+            maniobra: codigo,
+            // En rotondas, el número de salida
+            modificador: codigo == .rotonda ? (maniobra?.salidaRotonda ?? 0) : 0,
+            distancia: progreso.distanceToNextManeuver,
+            angulo: Flechas.angulo(maniobra),
+            distanciaRestante: progreso.distanceRemaining,
+            tiempoRestante: progreso.durationRemaining,
+            horaLlegada: Self.horaLlegada(dentroDe: progreso.durationRemaining),
+            // El paso actual entero, para el avance hacia la maniobra
+            longitudPaso: pasos.first?.distance
+        )
+    }
+
+    /// Hora de llegada prevista (NAV, v0.6): en minutos desde la medianoche,
+    /// con la hora local del iPhone, redondeada al minuto. Nil sin tiempo.
+    private static func horaLlegada(dentroDe segundos: Double) -> Int? {
+        guard segundos.isFinite, segundos >= 0 else { return nil }
+        let llegada = Date().addingTimeInterval(segundos + 30)
+        let partes = Calendar.current.dateComponents([.hour, .minute], from: llegada)
+        guard let hora = partes.hour, let minuto = partes.minute else { return nil }
+        return hora * 60 + minuto
     }
 
     /// El tramo de ruta por delante para el cuadro (TRAZO), en los ejes de la
-    /// moto. Nil fuera de ruta, recalculando o al llegar: el cuadro deja de
-    /// dibujarlo.
-    private func trazoParaCuadro(_ estado: NavigationState, maximoPuntos: Int) -> (puntos: [PuntoPlano], giro: Int?)? {
+    /// moto, y su nivel de escala (§7 ter, v0.6, elegida por el autor el
+    /// 2026-10-09): según lo que falte para la maniobra, y dentro de la misma
+    /// maniobra solo baja (Trazo.nivel). Se mandan 1,25 veces los metros del
+    /// nivel (hasta la 0.9.4, hasta 150 m después del giro, entre 250 y 1000:
+    /// al acercarse, el cuadro se acercaba y parecía que faltaba más). Nil
+    /// fuera de ruta, recalculando o al llegar: el cuadro deja de dibujarlo.
+    private func trazoParaCuadro(_ estado: NavigationState, maximoPuntos: Int) -> (tramo: TramoTrazo, nivel: Int)? {
         guard maximoPuntos >= 2, !llegada, !estado.isCalculatingNewRoute,
               case let .navigating(currentStepGeometryIndex: indice, userLocation: _, snappedUserLocation: ajustada,
                                    remainingSteps: pasos, remainingWaypoints: _, progress: progreso, summary: _,
@@ -750,7 +841,13 @@ final class Navegacion: ObservableObject {
                                    annotationJson: _) = estado.tripState,
               desvio == .noDeviation
         else { return nil }
-        let metros = Self.metrosTrazo(alGiro: progreso.distanceToNextManeuver)
+        // Una maniobra nueva (otro paso actual) elige el nivel de nuevo
+        let clave = ClaveManiobra(pasos: pasos.count, giro: pasos.first?.geometry.last)
+        let nivel = Trazo.nivel(metrosAlGiro: progreso.distanceToNextManeuver,
+                                anterior: clave == maniobraEscala ? nivelEscala : nil)
+        maniobraEscala = clave
+        nivelEscala = nivel
+        let metros = Trazo.metrosTramo(nivel: nivel)
         // Solo los pasos que hacen falta: del actual cuenta lo que queda
         let cuantos = Trazo.pasosNecesarios(distancias: pasos.map { $0.distance },
                                             restanteEnActual: progreso.distanceToNextManeuver, metros: metros)
@@ -758,8 +855,10 @@ final class Navegacion: ObservableObject {
             paso.geometry.map { PuntoRuta(latitud: $0.lat, longitud: $0.lng) }
         }
         let origen = PuntoRuta(latitud: ajustada.coordinates.lat, longitud: ajustada.coordinates.lng)
-        return Trazo.tramo(pasos: geometrias, indice: indice.map { Int($0) }, desde: origen,
-                           metros: metros, giro: geometrias.first?.last, maximoPuntos: maximoPuntos)
+        guard let tramo = Trazo.tramo(pasos: geometrias, indice: indice.map { Int($0) }, desde: origen,
+                                      metros: metros, giro: geometrias.first?.last, maximoPuntos: maximoPuntos)
+        else { return nil }
+        return (tramo, nivel)
     }
 
     private func posicionNueva(_ posicion: CLLocation) {
@@ -772,6 +871,14 @@ final class Navegacion: ObservableObject {
             precisionVertical = nil
         }
     }
+}
+
+/// La maniobra en curso, para la escala del tramo del cuadro: cambia al pasar
+/// al paso siguiente (quedan menos pasos) o con una ruta nueva (otro punto de
+/// giro).
+private struct ClaveManiobra: Equatable {
+    let pasos: Int
+    let giro: GeographicCoordinate?
 }
 
 private extension ClavePreferencia {

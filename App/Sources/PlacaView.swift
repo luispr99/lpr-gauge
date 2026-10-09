@@ -1,11 +1,12 @@
 import SwiftUI
 import LPRCore
 
-// Prueba del enlace BLE con la placa (PROTOCOLO.md v0.5): estado de la
+// Prueba del enlace BLE con la placa (PROTOCOLO.md v0.6): estado de la
 // conexión, batería del iPhone que se envía en MOVIL, un texto de prueba para
-// la cara de navegación (NAV_TEXT), si se manda el tramo de ruta (TRAZO) y los
-// ecos de STATUS. (El registro para
-// depurar, que iba aquí hasta la 0.8.2, va al del sistema: EnlaceBLE.anotar)
+// la cara de navegación (NAV_TEXT), si se mandan la siguiente maniobra (NAV),
+// el tramo de ruta (TRAZO) y sus cruces (CRUCES), y los ecos de STATUS. (El
+// registro para depurar, que iba aquí hasta la 0.8.2, va al del sistema:
+// EnlaceBLE.anotar)
 struct PlacaView: View {
     @ObservedObject var enlace: EnlaceBLE
     @State private var textoPrueba = ""
@@ -81,6 +82,21 @@ struct PlacaView: View {
                 }
 
                 Section {
+                    LabeledContent("Siguiente maniobra") {
+                        if enlace.admiteNav {
+                            Text(enlace.navActivo ? "Enviándose" : "Sin ruta")
+                        } else {
+                            Text("La placa no lo admite")
+                        }
+                    }
+                    LabeledContent("Eco de la placa") { Text(texto(enlace.ecoNav)) }
+                } header: {
+                    Text("Flecha en el cuadro")
+                } footer: {
+                    Text("Con una ruta iniciada, la app manda la flecha de la siguiente maniobra, la distancia, lo que queda y la hora de llegada.")
+                }
+
+                Section {
                     LabeledContent("Tramo de ruta") {
                         if enlace.admiteTrazo {
                             Text(enlace.trazoActivo ? "Enviándose" : "Sin tramo")
@@ -89,10 +105,18 @@ struct PlacaView: View {
                         }
                     }
                     LabeledContent("Eco de la placa") { Text(texto(enlace.ecoTrazo)) }
+                    LabeledContent("Cruces") {
+                        if enlace.admiteCruces {
+                            Text(enlace.trazoActivo ? "Con cada tramo" : "Sin tramo")
+                        } else {
+                            Text("La placa no lo admite")
+                        }
+                    }
+                    LabeledContent("Eco de los cruces") { Text(texto(enlace.ecoCruces)) }
                 } header: {
                     Text("Recorrido en el cuadro")
                 } footer: {
-                    Text("Con una ruta iniciada, la app manda el tramo de ruta que queda por delante para dibujarlo en la cara de navegación.")
+                    Text("Con una ruta iniciada, la app manda el tramo de ruta que queda por delante para dibujarlo en la cara de navegación, con las calles que salen de él.")
                 }
             }
             .scrollDismissesKeyboard(.interactively)

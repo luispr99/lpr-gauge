@@ -73,13 +73,17 @@ enum ClienteValhalla {
     }
 
     /// Las mismas rutas en formato OSRM, como las pide Ferrostar, para guiar.
+    /// Sus cruces quedan guardados para el cuadro (RutasRecientes): Ferrostar
+    /// no los conserva en sus rutas.
     static func rutasFerrostar(_ peticion: PeticionRutas) async throws -> [Route] {
         let adaptador = try RouteAdapter.fromWellKnownRouteProvider(wellKnownRouteProvider: peticion.proveedor())
         let (direccion, cabeceras, cuerpo) = try partes(
             adaptador.generateRequest(userLocation: peticion.origen, waypoints: [peticion.destino])
         )
         let datos = try await enviar(direccion, cabeceras, cuerpo)
-        return try adaptador.parseResponse(response: datos)
+        let rutas = try adaptador.parseResponse(response: datos)
+        RutasRecientes.compartida.guardar(datos)
+        return rutas
     }
 
     private static func partes(_ peticion: RouteRequest) throws -> (URL, [String: String], Data) {
@@ -90,7 +94,9 @@ enum ClienteValhalla {
     }
 
     /// POST como lo hace Ferrostar (cabeceras del generador y 15 s de espera),
-    /// con la identificación de la app (ClienteRutas).
+    /// con la identificación de la app (ClienteRutas). Los cruces los guarda,
+    /// si hacen falta, quien llama: las rutas propuestas no vienen en formato
+    /// OSRM.
     private static func enviar(_ direccion: URL, _ cabeceras: [String: String], _ cuerpo: Data) async throws -> Data {
         var peticion = URLRequest(url: direccion)
         peticion.httpMethod = "POST"
@@ -99,10 +105,48 @@ enum ClienteValhalla {
             peticion.setValue(valor, forHTTPHeaderField: nombre)
         }
         peticion.timeoutInterval = 15
-        let (datos, respuesta) = try await ClienteRutas().loadData(with: peticion)
+        let (datos, respuesta) = try await ClienteRutas(guardarCruces: false).loadData(with: peticion)
         if let http = respuesta as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             throw Fallo.servidor(estado: http.statusCode, mensaje: RespuestaValhalla.mensajeDeError(datos))
         }
         return datos
+    }
+}
+
+/// Las rutas en formato OSRM de las últimas respuestas (la de «Iniciar» y las
+/// de los recálculos de Ferrostar), con sus cruces, para mandar al cuadro las
+/// calles del tramo (CRUCES, PROTOCOLO.md §7 quater). Navegacion se queda con
+/// los de la ruta cuyo trazado coincide con el del guiado (Cruces.buscar).
+/// Ferrostar pide los recálculos fuera del hilo principal (ClienteRutas), así
+/// que el acceso va con un cerrojo.
+final class RutasRecientes: @unchecked Sendable {
+    static let compartida = RutasRecientes()
+
+    /// Bastan las de las dos últimas respuestas (hasta tres rutas cada una,
+    /// con las alternativas).
+    private static let maximo = 6
+    private let cerrojo = NSLock()
+    private var rutas: [RutaConCruces] = []
+
+    /// Decodifica una respuesta y guarda sus rutas, delante de las anteriores.
+    /// Lo que no sea una respuesta OSRM se ignora.
+    func guardar(_ datos: Data) {
+        guard let nuevas = try? RespuestaOSRM.rutas(de: datos), !nuevas.isEmpty else { return }
+        cerrojo.lock()
+        defer { cerrojo.unlock() }
+        rutas = Array((nuevas + rutas).prefix(Self.maximo))
+    }
+
+    func todas() -> [RutaConCruces] {
+        cerrojo.lock()
+        defer { cerrojo.unlock() }
+        return rutas
+    }
+
+    /// Al terminar la ruta.
+    func olvidar() {
+        cerrojo.lock()
+        defer { cerrojo.unlock() }
+        rutas = []
     }
 }
