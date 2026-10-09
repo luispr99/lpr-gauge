@@ -101,6 +101,20 @@ final class TrazoTests: XCTestCase {
                                                 metros: 300, giro: punto(0, 300)))
         XCTAssertEqual(pegado.puntos.last!.y, 1, accuracy: 0.5)
         XCTAssertGreaterThan(pegado.puntos.last!.x, 250)
+        XCTAssertEqual(pegado.giro, 1)
+    }
+
+    func testTramoConservaUnGiroSuave() {
+        // Salida de 3° a la derecha con la moto a 40 m: el vértice está a menos
+        // de 2 m de la cuerda y Douglas-Peucker lo quitaría (revisión de la 0.9.1)
+        let norte = [punto(0, 0), punto(0, 500), punto(0, 1000)]
+        let rad = 3.0 * .pi / 180
+        let salida = (0...2).map { punto(Double($0) * 500 * sin(rad), 1000 + Double($0) * 500 * cos(rad)) }
+        let tramo = try! XCTUnwrap(Trazo.tramo(pasos: [norte, salida], indice: 1, desde: punto(0, 960),
+                                               metros: 250, giro: punto(0, 1000)))
+        XCTAssertEqual(tramo.giro, 1)
+        XCTAssertEqual(tramo.puntos[1].x, 0, accuracy: 0.5)
+        XCTAssertEqual(tramo.puntos[1].y, 40, accuracy: 0.5)
     }
 
     func testPasosNecesariosCuentaLoQueQuedaDelActual() {

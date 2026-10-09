@@ -123,7 +123,9 @@ public enum Trazo {
     /// estable que el del GPS y que el de un solo segmento; ver `sentido`). Se
     /// simplifica hasta que quepan
     /// `maximoPuntos`. `giro` es el punto del próximo giro (el final del paso
-    /// actual): su índice en el tramo, si está (a menos de 10 m de un punto).
+    /// actual): su índice en el tramo, si está (a menos de 10 m de un punto de
+    /// la ruta). Ese punto se conserva al simplificar: si no, en un giro suave
+    /// Douglas-Peucker lo quitaría (lo vio la revisión de la 0.9.1).
     /// Nil si no hay al menos dos puntos.
     public static func tramo(
         pasos: [[PuntoRuta]],
@@ -139,30 +141,49 @@ public enum Trazo {
         let sentido = Self.sentido(paso: pasos.first, indice: indice, desde: origen, anticipacion: anticipacion)
             ?? rumbo(de: origen, a: ruta[1])
 
-        let limite = max(2, maximoPuntos)
-        var tolerancia = 2.0
-        var simple = Simplificar.douglasPeucker(ruta, tolerancia: tolerancia)
-        var intentos = 0
-        while simple.count > limite && intentos < 40 {
-            tolerancia *= 1.5
-            simple = Simplificar.douglasPeucker(ruta, tolerancia: tolerancia)
-            intentos += 1
-        }
-        if simple.count > limite {
-            simple = Array(simple.prefix(limite))
-        }
-
-        var indiceGiro: Int?
+        // El giro en la ruta sin simplificar: el punto más cercano, a 10 m o menos
+        var giroEnRuta: Int?
         if let giro {
             var mejor = 10.0
-            for (numero, punto) in simple.enumerated() where numero > 0 {
+            for (numero, punto) in ruta.enumerated() where numero > 0 {
                 let d = distancia(punto, giro)
                 if d <= mejor {
                     mejor = d
-                    indiceGiro = numero
+                    giroEnRuta = numero
                 }
             }
         }
-        return (aEjesMoto(simple, origen: origen, rumbo: sentido), indiceGiro)
+
+        let limite = max(2, maximoPuntos)
+        var tolerancia = 2.0
+        var simple = simplificar(ruta, conservando: giroEnRuta, tolerancia: tolerancia)
+        var intentos = 0
+        while simple.puntos.count > limite && intentos < 40 {
+            tolerancia *= 1.5
+            simple = simplificar(ruta, conservando: giroEnRuta, tolerancia: tolerancia)
+            intentos += 1
+        }
+        var puntos = simple.puntos
+        var indiceGiro = simple.giro
+        if puntos.count > limite {
+            puntos = Array(puntos.prefix(limite))
+            if let g = indiceGiro, g >= limite { indiceGiro = nil }
+        }
+        return (aEjesMoto(puntos, origen: origen, rumbo: sentido), indiceGiro)
+    }
+
+    /// Douglas-Peucker sin perder el punto `conservando` (el giro): se
+    /// simplifica por separado antes y después de él. Devuelve también dónde
+    /// queda ese punto.
+    static func simplificar(_ ruta: [PuntoRuta], conservando indice: Int?, tolerancia: Double) -> (puntos: [PuntoRuta], giro: Int?) {
+        guard let indice, indice > 0, indice < ruta.count - 1 else {
+            let simple = Simplificar.douglasPeucker(ruta, tolerancia: tolerancia)
+            // El primero y el último siempre se conservan
+            let giro = indice.map { $0 == 0 ? 0 : simple.count - 1 }
+            return (simple, giro)
+        }
+        let antes = Simplificar.douglasPeucker(Array(ruta[0...indice]), tolerancia: tolerancia)
+        let despues = Simplificar.douglasPeucker(Array(ruta[indice...]), tolerancia: tolerancia)
+        return (antes + despues.dropFirst(), antes.count - 1)
     }
 }

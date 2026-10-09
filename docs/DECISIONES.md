@@ -368,8 +368,26 @@ final.
   - La app lo manda al conectar, al cambiar o si se pide reenvío, y lo repite
     si en 2 s no llega el eco: el eco de STATUS sirve de confirmación.
   - Sin el bit (el firmware de referencia) sigue cada 2 s.
-- **Cobertura del móvil en el cuadro:** pedida el 2026-10-09. El autor: si no
-  se puede obtener, no se incluye. Pendiente de la investigación.
+- **Cobertura del móvil en el cuadro: no se incluye.** El autor la pidió el
+  2026-10-09, con las 4 rayas del iPhone y enviada solo al cambiar una raya,
+  y añadió: si no se puede obtener, no se incluye.
+  - Investigación del 2026-10-09: un workflow con tres investigadores y tres
+    escépticos, con fuentes.
+  - Resultado: iOS no da a las apps la intensidad de la señal móvil, ni en
+    primer plano ni en segundo [F42].
+  - Lo público que más se parece no son rayas: `NWPath.linkQuality` (iOS 26)
+    mide la calidad del enlace y Apple desaconseja usarla para decidir
+    [F43]; MetricKit da informes como mucho una vez al día.
+  - Los métodos no públicos (leer la barra de estado, funciones privadas de
+    CoreTelephony) dejaron de funcionar en iOS 16 o necesitan entitlements
+    que un Apple ID gratuito no puede firmar [F44].
+  - Lo único fiable sería «sin servicio» o la tecnología (5G/4G), con
+    `serviceCurrentRadioAccessTechnology` [F45]; no se ha pedido.
+- **0.9.2, segunda revisión** (workflow con verificación adversarial), con
+  dos fallos menores corregidos:
+  - el punto del giro se perdía al simplificar un giro suave
+    (`Trazo.simplificar` lo conserva; con prueba);
+  - al conectar se mandaba todo dos veces.
 - **Cuadro:** se describe en su `docs/CAMBIOS_CLAUDE.md`, secciones 75 y
   75 bis (el código no entra en este repositorio). Recibe `TRAZO` y lo dibuja con una línea de
   LVGL y un marcador de la moto; la distancia y la instrucción van debajo. El
@@ -747,6 +765,21 @@ Ferrostar:
   https://developer.apple.com/documentation/corelocation/cllocationmanager/allowsbackgroundlocationupdates ·
   WWDC23 «Discover streamlined location updates»:
   https://developer.apple.com/videos/play/wwdc2023/10180/
+- [F42] Foro de desarrolladores de Apple, «iOS Network Signal Strength», Quinn
+  (DTS), publicado el 2022-12-01 y revisado el 2026-06-18 (consultado el
+  2026-10-09): https://developer.apple.com/forums/thread/721067
+- [F43] Apple, `NWPath.LinkQuality` y MetricKit (consultados el 2026-10-09):
+  https://developer.apple.com/documentation/network/nwpath/linkquality-swift.enum ·
+  https://developer.apple.com/tutorials/data/documentation/metrickit.md
+- [F44] Foro de desarrolladores de Apple, lectura de la barra de estado desde
+  iOS 16 y entitlements (consultados el 2026-10-09):
+  https://developer.apple.com/forums/thread/713035 ·
+  https://developer.apple.com/forums/thread/726270 ·
+  https://developer.apple.com/forums/thread/3628 ·
+  https://developer.apple.com/forums/thread/757494
+- [F45] Apple, `serviceCurrentRadioAccessTechnology` (consultado el
+  2026-10-09):
+  https://developer.apple.com/documentation/coretelephony/cttelephonynetworkinfo/servicecurrentradioaccesstechnology
 - [F41] Apple, Core Bluetooth en segundo plano (guía archivada; consultada el
   2026-10-09):
   https://developer.apple.com/library/archive/documentation/NetworkingInternetWeb/Conceptual/CoreBluetooth_concepts/CoreBluetoothBackgroundProcessingForIOSApps/PerformingTasksWhileYourAppIsInTheBackground.html

@@ -507,7 +507,11 @@ final class EnlaceBLE: NSObject, ObservableObject {
         // dato por caducado (lo vio la revisión)
         RunLoop.main.add(temporizador, forMode: .common)
         mantenimiento = temporizador
-        // Al conectar, el estado completo sin esperar a ningún cambio (§10)
+        // Al conectar, el estado completo sin esperar a ningún cambio (§10).
+        // Cuenta como el reenvío pedido: el STATUS de la suscripción llega con
+        // «pide reenvío» antes de que la placa procese esto, y si no se
+        // mandaría todo dos veces (lo vio la revisión de la 0.9.1)
+        ultimoReenvioPedido = Date()
         mantener(todo: true)
         if conMovil && !movilAlCambiar {
             anotar("La placa no admite MOVIL al cambiar: se repite cada 2 s")
