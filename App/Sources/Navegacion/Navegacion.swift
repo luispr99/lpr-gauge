@@ -185,6 +185,9 @@ final class Navegacion: ObservableObject {
     /// trazo y los cruces se le pasan directamente desde aquí, también con la
     /// app en segundo plano
     weak var enlace: EnlaceBLE?
+    /// Las rutas hechas (pestaña «Rutas»): cada ruta que empieza a guiar (sin
+    /// simular) se guarda ahí.
+    weak var historial: HistorialRutas?
     /// Escala del tramo del cuadro (TRAZO, §7 ter): el nivel y la maniobra para
     /// la que se eligió; con otra maniobra se elige de nuevo.
     private var nivelEscala: Int?
@@ -308,6 +311,32 @@ final class Navegacion: ObservableObject {
                 aviso = "No se pudo localizar el lugar: \(error.localizedDescription)"
             }
         }
+    }
+
+    /// Carga una ruta hecha (pestaña «Rutas»): el mismo destino, tipo de ruta
+    /// y preferencias, y calcula las propuestas con la elegida ya marcada; solo
+    /// falta «Iniciar». Las rutas salen desde la posición de ahora: desde el
+    /// mismo sitio de la otra vez, la misma ruta (si el servidor no ha cambiado
+    /// sus datos); desde otro, la del mismo tipo. No mientras se guía.
+    func cargar(_ guardada: RutaGuardada) {
+        guard !navegando, !preparando else {
+            aviso = "Termina la ruta actual antes de cargar otra."
+            return
+        }
+        cancelarRuta()
+        // Sin destino, cambiarlas no pide rutas (preferenciaCambiada)
+        if evitarPeajes != guardada.evitarPeajes { evitarPeajes = guardada.evitarPeajes }
+        if evitarAutopistas != guardada.evitarAutopistas { evitarAutopistas = guardada.evitarAutopistas }
+        let margen = min(2, max(0, guardada.margen))
+        if margenExtra != margen { margenExtra = margen }
+        // elegirVariantes la mantiene si sale entre las propuestas
+        elegida = TipoVariante(rawValue: guardada.tipo) ?? .rapida
+        let lugar = ResultadoBusqueda(id: guardada.id.uuidString, nombre: guardada.nombre,
+                                      descripcion: guardada.descripcion,
+                                      latitud: guardada.latitud, longitud: guardada.longitud)
+        consulta = lugar.nombre
+        destino = lugar
+        pedirVariantes(hacia: lugar)
     }
 
     func cancelarRuta() {
@@ -644,6 +673,18 @@ final class Navegacion: ObservableObject {
             simulando = simulador != nil
             navegando = true
             llegada = false
+            // A la pestaña «Rutas», con lo necesario para cargarla otra vez
+            // (las simuladas, no: no son viajes)
+            if !simular, let destino {
+                let tipo = variante.tipos.contains(elegida) ? elegida : variante.tipo
+                historial?.guardar(RutaGuardada(
+                    nombre: destino.nombre, descripcion: destino.descripcion,
+                    latitud: destino.latitud, longitud: destino.longitud, tipo: tipo.rawValue,
+                    evitarPeajes: evitarPeajes, evitarAutopistas: evitarAutopistas, margen: margenExtra,
+                    metros: variante.metros, segundos: variante.segundos, curvas: variante.curvas,
+                    fecha: Date()
+                ))
+            }
             // El resumen del viaje cuenta desde aquí (NAV, v0.10)
             cuentakilometros = Cuentakilometros(inicio: Date())
             resumenLlegada = nil

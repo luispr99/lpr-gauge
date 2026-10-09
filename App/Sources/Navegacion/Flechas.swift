@@ -190,10 +190,12 @@ enum Flechas {
         return partes.joined(separator: ", ")
     }
 
-    /// Distancia como la leería un motorista: «350 m», «1,2 km».
+    /// Distancia como la leería un motorista: «350 m», «1,2 km». En metros,
+    /// como mucho «950 m»: desde 975, «1,0 km» (a petición del autor,
+    /// 2026-10-10; antes, de 975 a 999 salía «1000 m»). Igual que el cuadro.
     static func distancia(_ metros: Double) -> String {
         let espanol = Locale(identifier: "es_ES")
-        if metros < 1000 {
+        if metros < 975 {
             let redondeo = metros < 100 ? 10.0 : 50.0
             let valor = Int((metros / redondeo).rounded() * redondeo)
             return "\(valor) m"

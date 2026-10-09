@@ -1258,3 +1258,32 @@ Ferrostar:
   y no tiene prueba automática. Sin probar en el iPhone ni en la moto.
 - **Cuadro:** se hace en su proyecto (el código no entra en este
   repositorio).
+
+### 2026-10-10 · Pestaña «Rutas» y distancias desde 950 m (0.17.0)
+
+- **Petición del autor:** «añade una sección en la app que se llame rutas»
+  para volver a cargar un destino al que ya se fue, «misma ruta
+  preseleccionada y todo. que solo falte darle a iniciar».
+- **Qué se guarda (`LPRCore/RutasGuardadas.swift`):** al empezar a guiar (no
+  con el simulador), el destino (nombre, descripción y coordenadas), el tipo
+  de ruta elegido, las preferencias (evitar peajes, evitar autopistas y el
+  margen) y, para la lista, km, tiempo y curvas de la ruta propuesta. La misma
+  ruta (destino a 100 m o menos, mismo tipo y preferencias) no se repite: sube
+  arriba y cuenta una vez más. Como mucho 30 (supuesto). Se guarda en el
+  iPhone (UserDefaults): no sale de él.
+- **Al tocar una (`Navegacion.cargar`):** pone esas preferencias (cambian
+  también las de la app, como si se tocaran a mano), marca el tipo de ruta,
+  pone el destino y calcula las propuestas; la app vuelve a «Navegar» y solo
+  falta «Iniciar». No mientras se guía.
+- **Límite:** no se guarda el trazado. Las rutas se calculan desde la
+  posición de ese momento: desde el mismo sitio, sale la misma ruta (Valhalla
+  da lo mismo con los mismos datos y opciones; si el servidor actualiza los
+  mapas, puede cambiar); desde otro, la del mismo tipo hasta el mismo destino.
+  Repetir exactamente el trazado guardado (con puntos de paso) queda para más
+  adelante si hace falta.
+- **Distancias:** `Flechas.distancia` da en metros como mucho «950 m»; desde
+  975 m, «1,0 km» (antes, de 975 a 999 salía «1000 m»), igual que el cuadro
+  (su sección 88).
+- **Sin probar:** sin compilar en local; las pruebas de `RutasGuardadas`
+  corren en el CI. La pestaña y la carga no tienen prueba automática ni están
+  probadas en el iPhone.
