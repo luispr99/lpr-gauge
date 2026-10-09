@@ -1,10 +1,14 @@
+import MapKit
 import SwiftUI
 
-/// Buscar el destino y, al elegirlo, guiar: flecha, metros hasta el giro,
-/// instrucción, lo que falta y la altitud.
+/// Mapa con la posición y un buscador (Apple Maps). Al elegir un destino se
+/// previsualizan las variantes de ruta; al iniciar, el guiado: cartel con la
+/// flecha y los metros, mapa que sigue la posición y lo que falta.
 struct NavegacionView: View {
     @ObservedObject var navegacion: Navegacion
     @State private var mostrarAjustes = false
+    @State private var camara: MapCameraPosition = .userLocation(fallback: .automatic)
+    @FocusState private var escribiendo: Bool
 
     var body: some View {
         NavigationStack {
@@ -12,16 +16,17 @@ struct NavegacionView: View {
                 if navegacion.navegando {
                     guiado
                 } else {
-                    busqueda
+                    exploracion
                 }
             }
             .navigationTitle("Navegar")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         mostrarAjustes = true
                     } label: {
-                        Label("Servidores", systemImage: "gearshape")
+                        Label("Servidor de rutas", systemImage: "gearshape")
                     }
                 }
             }
@@ -31,64 +36,153 @@ struct NavegacionView: View {
         }
     }
 
-    // MARK: - Búsqueda
+    // MARK: - Exploración: mapa, búsqueda y variantes
 
-    private var busqueda: some View {
-        List {
-            Section {
-                HStack {
-                    TextField("Destino: calle, pueblo, lugar…", text: $navegacion.consulta)
-                        .textInputAutocapitalization(.never)
-                        .submitLabel(.search)
-                        .onSubmit { navegacion.buscar() }
-                    if navegacion.buscando {
-                        ProgressView()
-                    } else {
-                        Button("Buscar") { navegacion.buscar() }
-                            .disabled(navegacion.consulta.trimmingCharacters(in: .whitespaces).isEmpty)
+    private var exploracion: some View {
+        Map(position: $camara) {
+            UserAnnotation()
+            // La elegida, encima de las demás
+            ForEach(variantesOrdenadas) { variante in
+                let elegida = variante.tipo == navegacion.elegida
+                MapPolyline(coordinates: variante.geometria)
+                    .stroke(color(variante.tipo).opacity(elegida ? 1 : 0.5), lineWidth: elegida ? 8 : 5)
+            }
+            if let destino = navegacion.destino {
+                Marker(destino.nombre, coordinate: destino.coordenada)
+            }
+        }
+        .mapControls {
+            MapUserLocationButton()
+            MapCompass()
+            MapScaleView()
+        }
+        .safeAreaInset(edge: .top) {
+            barraBusqueda
+        }
+        .safeAreaInset(edge: .bottom) {
+            panelInferior
+        }
+        .onChange(of: navegacion.consulta) { _, _ in
+            navegacion.consultaCambiada()
+        }
+        .onChange(of: navegacion.variantes.count) { _, cuantas in
+            if cuantas > 0 {
+                encuadrarVariantes()
+            }
+        }
+    }
+
+    private var variantesOrdenadas: [VarianteRuta] {
+        navegacion.variantes.filter { $0.tipo != navegacion.elegida }
+            + navegacion.variantes.filter { $0.tipo == navegacion.elegida }
+    }
+
+    private var barraBusqueda: some View {
+        VStack(spacing: 6) {
+            HStack {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField("Buscar destino", text: $navegacion.consulta)
+                    .focused($escribiendo)
+                    .autocorrectionDisabled()
+                    .submitLabel(.search)
+                if !navegacion.consulta.isEmpty {
+                    Button {
+                        navegacion.cancelarRuta()
+                        camara = .userLocation(fallback: .automatic)
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
                     }
                 }
-            } footer: {
-                Text("La búsqueda se hace al pulsar Buscar, no mientras escribes.")
             }
+            .padding(10)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
 
-            if let aviso = navegacion.aviso {
-                Section {
-                    Text(verbatim: aviso)
-                        .foregroundStyle(.red)
-                }
-            }
-
-            if !navegacion.resultados.isEmpty {
-                Section("Resultados") {
-                    ForEach(navegacion.resultados) { resultado in
-                        Button {
-                            navegacion.navegar(a: resultado)
-                        } label: {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(verbatim: resultado.nombre)
-                                    .foregroundStyle(.primary)
-                                Text(verbatim: resultado.descripcion)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(2)
+            if escribiendo && !navegacion.sugerencias.isEmpty {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(navegacion.sugerencias, id: \.self) { sugerencia in
+                            Button {
+                                escribiendo = false
+                                navegacion.elegir(sugerencia)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(verbatim: sugerencia.title)
+                                        .foregroundStyle(.primary)
+                                    if !sugerencia.subtitle.isEmpty {
+                                        Text(verbatim: sugerencia.subtitle)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.vertical, 8)
+                                .padding(.horizontal, 12)
+                                .contentShape(Rectangle())
                             }
+                            .buttonStyle(.plain)
+                            Divider()
                         }
-                        .disabled(navegacion.calculando)
                     }
                 }
+                .frame(maxHeight: 320)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            }
+        }
+        .padding(.horizontal)
+        .padding(.top, 8)
+    }
+
+    private var panelInferior: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let aviso = navegacion.aviso {
+                Text(verbatim: aviso)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
             }
 
             if navegacion.calculando {
-                Section {
-                    HStack {
-                        ProgressView()
-                        Text("Calculando la ruta en moto…")
-                    }
+                HStack {
+                    ProgressView()
+                    Text("Calculando las rutas…")
                 }
             }
 
-            Section {
+            if !navegacion.variantes.isEmpty {
+                if let destino = navegacion.destino {
+                    Text(verbatim: destino.nombre)
+                        .font(.headline)
+                        .lineLimit(1)
+                }
+                ForEach(navegacion.variantes) { variante in
+                    Button {
+                        navegacion.elegida = variante.tipo
+                    } label: {
+                        HStack {
+                            Circle()
+                                .fill(color(variante.tipo))
+                                .frame(width: 12, height: 12)
+                            Text(LocalizedStringKey(variante.tipo.nombre))
+                            Spacer()
+                            Text(verbatim: Flechas.distancia(variante.metros))
+                                .monospacedDigit()
+                            Text(verbatim: Flechas.duracion(variante.segundos))
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                            Image(systemName: variante.tipo == navegacion.elegida ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(variante.tipo == navegacion.elegida ? Color.accentColor : .secondary)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+                if navegacion.variantes.contains(where: { $0.tipo == .secundarias }) {
+                    Text("«Por secundarias» evita autovías y prefiere carreteras secundarias; Valhalla no mide las curvas.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
                 Toggle("Simular el recorrido", isOn: $navegacion.simular)
                 if navegacion.simular {
                     Picker("Velocidad", selection: $navegacion.factorSimulacion) {
@@ -98,20 +192,54 @@ struct NavegacionView: View {
                     }
                     .pickerStyle(.segmented)
                 }
-            } footer: {
-                Text("La posición recorre la ruta sola, para ver cambiar las indicaciones sin moverte. La ruta sale de tu posición real.")
-            }
 
-            Section("GPS") {
-                LabeledContent("Posición") {
-                    Text(navegacion.hayPosicion ? "Con señal" : "Esperando señal…")
+                HStack {
+                    Button("Cancelar") {
+                        navegacion.cancelarRuta()
+                        camara = .userLocation(fallback: .automatic)
+                    }
+                    .buttonStyle(.bordered)
+                    Button {
+                        navegacion.iniciar()
+                    } label: {
+                        Text("Iniciar")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
                 }
-                LabeledContent("Altitud") { Text(textoAltitud) }
+            } else if !navegacion.calculando {
+                HStack {
+                    Label(navegacion.posicionActual == nil
+                              ? LocalizedStringKey("Esperando señal GPS…")
+                              : LocalizedStringKey("GPS con señal"),
+                          systemImage: "location")
+                    Spacer()
+                    Text(verbatim: "Altitud \(textoAltitud)")
+                }
+                .font(.footnote)
             }
 
-            Section {
-                atribucion
-            }
+            atribucion
+        }
+        .padding()
+        .background(.regularMaterial)
+    }
+
+    private func encuadrarVariantes() {
+        let puntos = navegacion.variantes.flatMap(\.geometria)
+        guard puntos.count > 1 else { return }
+        let rect = MKPolyline(coordinates: puntos, count: puntos.count).boundingMapRect
+        let margen = max(rect.size.width, rect.size.height) * 0.2
+        withAnimation {
+            camara = .rect(rect.insetBy(dx: -margen, dy: -margen))
+        }
+    }
+
+    private func color(_ tipo: TipoVariante) -> Color {
+        switch tipo {
+        case .rapida: return .blue
+        case .secundarias: return .orange
+        case .corta: return .green
         }
     }
 
@@ -155,14 +283,9 @@ struct NavegacionView: View {
                         Text(textoAltitud).font(.headline)
                     }
                 }
-                if let destino = navegacion.destino {
-                    Text(verbatim: destino.nombre)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
                 Button(role: .destructive) {
                     navegacion.terminar()
+                    camara = .userLocation(fallback: .automatic)
                 } label: {
                     Text("Terminar la navegación")
                         .frame(maxWidth: .infinity)
@@ -216,17 +339,17 @@ struct NavegacionView: View {
     private var avisosGuiado: some View {
         VStack(spacing: 6) {
             if navegacion.simulando {
-                aviso("Simulación: la posición no es la real", icono: "play.circle", color: .blue)
+                avisoMapa("Simulación: la posición no es la real", icono: "play.circle", color: .blue)
             }
             if navegacion.recalculando {
-                aviso("Recalculando la ruta…", icono: "arrow.triangle.2.circlepath", color: .orange)
+                avisoMapa("Recalculando la ruta…", icono: "arrow.triangle.2.circlepath", color: .orange)
             } else if navegacion.fueraDeRuta {
-                aviso("Fuera de ruta", icono: "exclamationmark.triangle", color: .orange)
+                avisoMapa("Fuera de ruta", icono: "exclamationmark.triangle", color: .orange)
             }
         }
     }
 
-    private func aviso(_ texto: LocalizedStringKey, icono: String, color: Color) -> some View {
+    private func avisoMapa(_ texto: LocalizedStringKey, icono: String, color: Color) -> some View {
         Label(texto, systemImage: icono)
             .font(.footnote.bold())
             .padding(.horizontal, 10)
@@ -243,20 +366,19 @@ struct NavegacionView: View {
         return "\(Int(altitud.rounded())) m" + precision
     }
 
-    /// Atribución que exigen los datos de OpenStreetMap (ODbL) y la política de
-    /// uso de Nominatim.
+    /// Atribución de los datos de la ruta (OpenStreetMap, ODbL). La del mapa de
+    /// Apple la pone MapKit.
     private var atribucion: some View {
-        Text(verbatim: "Mapa: Apple · Rutas: Valhalla (FOSSGIS) · Búsqueda: Nominatim · Datos de ruta © colaboradores de OpenStreetMap")
+        Text(verbatim: "Mapa y búsqueda: Apple · Rutas: Valhalla (FOSSGIS) · Datos de ruta © colaboradores de OpenStreetMap")
             .font(.caption2)
             .foregroundStyle(.secondary)
     }
 }
 
-/// Direcciones de los servidores de rutas y de búsqueda (Servidores.swift).
+/// Dirección del servidor de rutas (Servidores.swift).
 struct AjustesServidoresView: View {
     @Environment(\.dismiss) private var cerrar
     @AppStorage(Servidores.claveRutas) private var rutas = ""
-    @AppStorage(Servidores.claveBusqueda) private var busqueda = ""
 
     var body: some View {
         NavigationStack {
@@ -272,23 +394,12 @@ struct AjustesServidoresView: View {
                     Text("Vacío: el servidor público de FOSSGIS. Uso razonable, como mucho una petición por segundo.")
                 }
                 Section {
-                    TextField(Servidores.busquedaPorDefecto, text: $busqueda)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .keyboardType(.URL)
-                } header: {
-                    Text("Búsqueda (Nominatim)")
-                } footer: {
-                    Text("Vacío: el servidor público de OpenStreetMap, con su política de uso: operations.osmfoundation.org/policies/nominatim")
-                }
-                Section {
-                    Button("Volver a los servidores públicos") {
+                    Button("Volver al servidor público") {
                         rutas = ""
-                        busqueda = ""
                     }
                 }
             }
-            .navigationTitle("Servidores")
+            .navigationTitle("Servidor de rutas")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Listo") { cerrar() }
