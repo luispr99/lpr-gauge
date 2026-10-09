@@ -271,6 +271,15 @@ final.
   vías de clase autopista de OSM (`motorway`; en España, autopistas y
   autovías), sin contar los enlaces [F37]. Como los demás, los km son un
   máximo por maniobra.
+- **0.8.1, a petición del autor:**
+  - mapa en el 55 % (antes el 60 %);
+  - «Opciones de ruta» es un botón que se queda pulsado, en un tono más
+    oscuro, mientras las opciones están abiertas, y se cierra con otro toque
+    (antes, «Listo»);
+  - simulación a 50, 100 y 150 km/h (antes 36, 72 y 108), con pasos de
+    50/3,6 m: el simulador de Ferrostar 0.57.0 avanza un paso cada 1 s
+    dividido por el factor (`Location.swift`);
+  - el cartel del guiado, con fondo negro (antes azul).
 
 ### 2026-10-09 · Primeros datos en el cuadro: texto de navegación y carga (0.8.0)
 

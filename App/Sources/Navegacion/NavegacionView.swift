@@ -2,7 +2,7 @@ import MapKit
 import SwiftUI
 import LPRCore
 
-/// Mapa con la posición y un buscador (Apple Maps), en el 60 % de arriba; en
+/// Mapa con la posición y un buscador (Apple Maps), en el 55 % de arriba; en
 /// el resto, las opciones de ruta (peajes, autovías y tiempo extra) y, con un
 /// destino, la ruta más rápida y la de más curvas con los botones de cancelar e
 /// iniciar (maqueta aprobada por el autor el 2026-10-09). Al iniciar, el
@@ -19,7 +19,7 @@ struct NavegacionView: View {
     @FocusState private var escribiendo: Bool
 
     /// Parte de la pantalla para el mapa; el resto, para el panel.
-    private let partePantallaMapa: CGFloat = 0.6
+    private let partePantallaMapa: CGFloat = 0.55
 
     var body: some View {
         NavigationStack {
@@ -208,7 +208,10 @@ struct NavegacionView: View {
         .background(.regularMaterial)
     }
 
-    /// Abre y cierra las opciones; cerrada, resume las activas y el margen.
+    /// Botón que abre y cierra las opciones (a petición del autor): con el
+    /// primer toque se queda pulsado, en un tono más oscuro, y las opciones
+    /// ocupan el sitio de las rutas; con el segundo se cierran. Resume las
+    /// opciones activas y el margen.
     private var filaOpciones: some View {
         Button {
             withAnimation(.easeInOut(duration: 0.2)) {
@@ -218,42 +221,30 @@ struct NavegacionView: View {
             HStack(spacing: 6) {
                 Image(systemName: "slider.horizontal.3")
                 Text("Opciones de ruta")
-                if !mostrarOpciones {
-                    if navegacion.evitarPeajes {
-                        IconoTachable(nombre: "eurosign.circle", tachado: true)
-                            .foregroundStyle(Color.accentColor)
-                    }
-                    if navegacion.evitarAutopistas {
-                        IconoTachable(nombre: "road.lanes", tachado: true)
-                            .foregroundStyle(Color.accentColor)
-                    }
+                    .fontWeight(.semibold)
+                if navegacion.evitarPeajes {
+                    IconoTachable(nombre: "eurosign.circle", tachado: true)
+                }
+                if navegacion.evitarAutopistas {
+                    IconoTachable(nombre: "road.lanes", tachado: true)
                 }
                 Spacer()
-                if mostrarOpciones {
-                    Text("Listo")
-                        .fontWeight(.semibold)
-                        .foregroundStyle(Color.accentColor)
-                } else {
-                    Text(verbatim: textoMargen)
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
+                Text(verbatim: textoMargen)
+                    .monospacedDigit()
                 Image(systemName: mostrarOpciones ? "chevron.up" : "chevron.down")
-                    .foregroundStyle(mostrarOpciones ? Color.accentColor : Color.secondary)
             }
             .font(.subheadline)
+            .foregroundStyle(mostrarOpciones ? Color.white : Color.primary)
             .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.vertical, 10)
             .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(
-                        mostrarOpciones ? Color.accentColor : Color.secondary.opacity(0.35),
-                        lineWidth: mostrarOpciones ? 1.5 : 0.5
-                    )
+                mostrarOpciones ? Color.accentColor.opacity(0.85) : Color.secondary.opacity(0.15),
+                in: RoundedRectangle(cornerRadius: 10)
             )
             .contentShape(RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
+        .accessibilityAddTraits(mostrarOpciones ? .isSelected : [])
         .disabled(navegacion.preparando)
     }
 
@@ -635,7 +626,7 @@ struct NavegacionView: View {
         }
         .padding()
         .frame(maxWidth: .infinity)
-        .background(.blue)
+        .background(.black)
         .foregroundStyle(.white)
     }
 
@@ -718,9 +709,9 @@ struct AjustesView: View {
                     Toggle("Simular el recorrido", isOn: $navegacion.simular)
                     if navegacion.simular {
                         Picker("Velocidad", selection: $navegacion.factorSimulacion) {
-                            Text(verbatim: "36 km/h").tag(UInt64(1))
-                            Text(verbatim: "72 km/h").tag(UInt64(2))
-                            Text(verbatim: "108 km/h").tag(UInt64(3))
+                            Text(verbatim: "50 km/h").tag(UInt64(1))
+                            Text(verbatim: "100 km/h").tag(UInt64(2))
+                            Text(verbatim: "150 km/h").tag(UInt64(3))
                         }
                         .pickerStyle(.segmented)
                     }

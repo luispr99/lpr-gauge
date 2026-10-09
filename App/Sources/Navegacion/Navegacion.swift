@@ -188,10 +188,12 @@ final class Navegacion: ObservableObject {
     @Published private(set) var puntoGiro: CLLocationCoordinate2D?
 
     /// Simulación: en vez del GPS, una posición que recorre la ruta sola, para ver
-    /// cambiar las indicaciones sin moverse. Avanza 10 m por paso, y cada paso
-    /// dura 1 s dividido por el factor de velocidad (factor 1 = 36 km/h).
+    /// cambiar las indicaciones sin moverse. El simulador de Ferrostar avanza un
+    /// paso cada 1 s dividido por el factor de velocidad; con pasos de 50/3,6 m,
+    /// el factor 1 son 50 km/h, el 2 100 y el 3 150 (a petición del autor).
     @Published var simular = false
     @Published var factorSimulacion: UInt64 = 2
+    static let metrosPorPasoSimulacion = 50.0 / 3.6
     @Published private(set) var simulando = false
 
     // MARK: GPS
@@ -519,7 +521,7 @@ final class Navegacion: ObservableObject {
                 ubicacion: fuente
             )
             if let simulador {
-                try simulador.setSimulatedRoute(ruta, resampleDistance: 10)
+                try simulador.setSimulatedRoute(ruta, resampleDistance: Self.metrosPorPasoSimulacion)
                 simulador.warpFactor = max(1, factorSimulacion)
             }
             try nucleo.startNavigation(route: ruta)
