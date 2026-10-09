@@ -154,7 +154,9 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
 - **Indicador del cuadro** (umbrales del autor de la app, supuestos a ajustar
   en la moto): bueno con 10 m o menos; regular, de 10 a 30; malo, con más de
   30; sin GPS (alerta roja) sin mensaje vigente, sin fix o con la posición de
-  hace más de 5 s.
+  hace más de 5 s. Mientras no ha llegado ningún `GPS` en la conexión, el
+  cuadro no enseña nada: así no da una alarma falsa con una app que no lo
+  manda (anterior a la v0.7) ni justo al reconectar.
 
 ## 7. `MOVIL` (escritura sin respuesta): estado del móvil
 
