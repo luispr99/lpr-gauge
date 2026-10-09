@@ -11,13 +11,18 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "0.2.1"
-    CURRENT_PROJECT_VERSION: "3"
+    MARKETING_VERSION: "0.3.0"
+    CURRENT_PROJECT_VERSION: "4"
     SWIFT_VERSION: "5.0"
 
 packages:
   Core:
     path: Core
+  # Navegación (BSD-3, sin telemetría en el núcleo). Versión fija: antes de la
+  # 1.0 cambia la API a menudo. Solo se usa el producto FerrostarCore, sin mapa
+  Ferrostar:
+    url: https://github.com/stadiamaps/ferrostar
+    exactVersion: 0.57.0
 
 targets:
   LPRGauge:
@@ -29,6 +34,8 @@ targets:
     dependencies:
       - package: Core
         product: LPRCore
+      - package: Ferrostar
+        product: FerrostarCore
     info:
       path: App/Info.plist
       properties:
@@ -44,6 +51,9 @@ targets:
         NSBluetoothAlwaysUsageDescription: >-
           LPR Gauge se conecta por Bluetooth al cuadro de la moto para enviarle la
           navegación y el estado del iPhone.
+        NSLocationWhenInUseUsageDescription: >-
+          LPR Gauge usa tu ubicación para calcular la ruta, guiarte giro a giro y
+          mostrar la altitud.
     settings:
       base:
         # Fijo desde el primer día: la cuenta gratuita solo admite 10 App IDs

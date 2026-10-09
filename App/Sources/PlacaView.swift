@@ -4,8 +4,8 @@ import LPRCore
 // Prueba del enlace BLE con la placa (PROTOCOLO.md v0.2): estado de la
 // conexión, batería del iPhone que se envía en MOVIL, eco de STATUS y el
 // registro para depurar sin Xcode.
-struct ContentView: View {
-    @StateObject private var enlace = EnlaceBLE()
+struct PlacaView: View {
+    @ObservedObject var enlace: EnlaceBLE
 
     private let versionApp =
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
@@ -60,7 +60,7 @@ struct ContentView: View {
                     }
                 }
             }
-            .navigationTitle(Text(verbatim: "LPR Gauge"))
+            .navigationTitle("Placa")
             .safeAreaInset(edge: .bottom) {
                 Text("Versión \(versionApp) · protocolo v\(Int(Protocolo.version))")
                     .font(.footnote)
