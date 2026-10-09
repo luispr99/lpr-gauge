@@ -67,6 +67,37 @@ final.
   como mucho una petición por segundo [F20]. Para un producto haría falta un
   servidor propio.
 
+### 2026-10-09 · Navegación: servidores, buscador y Ferrostar
+
+- **Origen:** el autor propuso usar lo mismo que la web
+  valhalla.openstreetmap.de. Es [valhalla/web-app](https://github.com/valhalla/web-app)
+  (MIT); según su código (commit `439ea98`, revisado el 2026-10-09):
+  - rutas del servidor Valhalla de FOSSGIS, `valhalla1.openstreetmap.de`, con la
+    cabecera `X-Client-Id`;
+  - búsqueda con Nominatim (`nominatim.openstreetmap.org/search`), al pulsar y no
+    mientras se escribe.
+- **Decisión:** la app usa los mismos dos servidores, con las direcciones
+  configurables en Ajustes.
+  - Rutas: perfil `motorcycle` (en beta), `use_tolls: 0` e instrucciones `es-ES`,
+    los mismos parámetros que el enlace del autor.
+  - Cada petición se identifica con `User-Agent` y `X-Client-Id`.
+- **Condiciones** (orientativo; si llega a producto, debe revisarlo una persona):
+  - FOSSGIS: uso razonable, como mucho una petición por segundo; no sirve como
+    servicio de un producto [F20].
+  - Nominatim, según su política [F32]: como mucho una petición por segundo para
+    toda la app; prohibido autocompletar; identificar la app; atribución «©
+    OpenStreetMap»; poder dejar de usarlo sin actualizar la app (por eso la
+    dirección es configurable).
+- **Privacidad:** el texto buscado, el punto de salida y el destino llegan a esos
+  servidores y pueden quedar en sus registros. La alternativa, si algún día
+  molesta, es un Valhalla propio.
+- **Ferrostar 0.57.0**, versión fija (antes de la 1.0 su API cambia a menudo):
+  - solo el producto `FerrostarCore`, sin mapa y con la voz silenciada;
+  - proveedor de ubicación propio, con `pausesLocationUpdatesAutomatically =
+    false` y la altitud del GPS;
+  - configuración de avance de pasos y desvío de ruta tomada de la app de
+    demostración de Ferrostar.
+
 ### 2026-10-08 · Nombre: «LPR Gauge»
 
 - La app se llama «LPR Gauge», y el firmware de referencia se anuncia por
@@ -367,3 +398,5 @@ Ferrostar:
   https://github.com/stadiamaps/ferrostar/blob/main/common/ferrostar/src/models.rs ·
   https://github.com/stadiamaps/ferrostar/blob/main/common/ferrostar/src/routing_adapters/valhalla.rs ·
   Valhalla, referencia de la API: https://valhalla.github.io/valhalla/api/route/api-reference/
+- [F32] Política de uso de Nominatim (OSMF):
+  https://operations.osmfoundation.org/policies/nominatim/
