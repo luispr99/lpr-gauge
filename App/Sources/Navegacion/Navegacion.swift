@@ -175,6 +175,10 @@ final class Navegacion: ObservableObject {
     @Published private(set) var segundosRestantes: Double?
     @Published private(set) var fueraDeRuta = false
     @Published private(set) var recalculando = false
+    /// Texto para la cara de navegación del cuadro (NAV_TEXT): la distancia al
+    /// giro y, debajo, la instrucción; nil sin guiado. ContentView se lo pasa
+    /// al enlace con la placa
+    @Published private(set) var textoCuadro: String?
 
     /// Para el mapa del guiado: la ruta, la posición (ajustada a la ruta si se va
     /// por ella), el rumbo y el punto del próximo giro.
@@ -596,6 +600,7 @@ final class Navegacion: ObservableObject {
         recalculando = false
         geometriaGuiado = []
         geometriaRuta = []
+        textoCuadro = nil
         posicionEnRuta = nil
         rumbo = nil
         puntoGiro = nil
@@ -678,6 +683,20 @@ final class Navegacion: ObservableObject {
         }
         if case .complete = estado.tripState {
             llegada = true
+        }
+
+        let texto: String?
+        if llegada {
+            texto = "Has llegado"
+        } else if let maniobra {
+            texto = [metrosAlGiro.map { Flechas.distancia($0) }, maniobra.texto]
+                .compactMap { $0 }
+                .joined(separator: "\n")
+        } else {
+            texto = nil
+        }
+        if texto != textoCuadro {
+            textoCuadro = texto
         }
     }
 

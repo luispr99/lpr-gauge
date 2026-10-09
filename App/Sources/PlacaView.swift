@@ -1,11 +1,13 @@
 import SwiftUI
 import LPRCore
 
-// Prueba del enlace BLE con la placa (PROTOCOLO.md v0.2): estado de la
-// conexión, batería del iPhone que se envía en MOVIL, eco de STATUS y el
-// registro para depurar sin Xcode.
+// Prueba del enlace BLE con la placa (PROTOCOLO.md v0.3): estado de la
+// conexión, batería del iPhone que se envía en MOVIL, un texto de prueba para
+// la cara de navegación (NAV_TEXT), eco de STATUS y el registro para depurar
+// sin Xcode.
 struct PlacaView: View {
     @ObservedObject var enlace: EnlaceBLE
+    @State private var textoPrueba = ""
 
     private let versionApp =
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
@@ -51,6 +53,30 @@ struct PlacaView: View {
                     }
                     Button("Reenviar ahora") { enlace.reenviar() }
                         .disabled(enlace.estado != .conectado)
+                }
+
+                Section {
+                    TextField("Texto para la cara de navegación", text: $textoPrueba, axis: .vertical)
+                        .lineLimit(1...4)
+                    HStack {
+                        Button("Enviar") { enlace.ponerTexto(textoPrueba) }
+                            .disabled(textoPrueba.isEmpty)
+                        Spacer()
+                        Button("Borrar", role: .destructive) {
+                            textoPrueba = ""
+                            enlace.ponerTexto(nil)
+                        }
+                    }
+                    .buttonStyle(.borderless)
+                    LabeledContent("Enviándose") {
+                        Text(verbatim: enlace.textoCuadro ?? "—")
+                            .lineLimit(2)
+                    }
+                    LabeledContent("Eco de la placa") { Text(texto(enlace.ecoTexto)) }
+                } header: {
+                    Text("Texto en el cuadro")
+                } footer: {
+                    Text("Sale en la cara de navegación del cuadro. Con una ruta iniciada, la app manda la indicación en su lugar.")
                 }
 
                 Section("Registro") {

@@ -42,6 +42,10 @@ final class EnlaceBLE: NSObject, ObservableObject {
     @Published private(set) var ultimaSecuencia: UInt8?
     @Published private(set) var ultimoEco: UInt8?
     @Published private(set) var latenciaMs: Int?
+    /// Texto que se manda a la cara de navegación del cuadro (NAV_TEXT), nil sin
+    /// texto, y el último eco de la placa.
+    @Published private(set) var textoCuadro: String?
+    @Published private(set) var ecoTexto: UInt8?
     /// Registro en memoria para depurar sin Xcode (no sale del iPhone).
     @Published private(set) var registro: [String] = []
 
@@ -50,7 +54,12 @@ final class EnlaceBLE: NSObject, ObservableObject {
     private var caracInfo: CBCharacteristic?
     private var caracStatus: CBCharacteristic?
     private var caracMovil: CBCharacteristic?
+    private var caracTexto: CBCharacteristic?
     private var secuencia = Secuencia()
+    /// Cada característica lleva su secuencia (PROTOCOLO.md §3).
+    private var secuenciaTexto = Secuencia()
+    private var textoPendiente = false
+    private var primerTextoAnotado = false
     /// Hora de envío de cada secuencia pendiente de eco, para la latencia.
     private var enviados: [UInt8: Date] = [:]
     /// El primer STATUS tras suscribirse puede traer el eco 0 de «aún no he
@@ -73,6 +82,7 @@ final class EnlaceBLE: NSObject, ObservableObject {
     private let uuidInfo = CBUUID(string: Protocolo.UUIDs.deviceInfo)
     private let uuidStatus = CBUUID(string: Protocolo.UUIDs.status)
     private let uuidMovil = CBUUID(string: Protocolo.UUIDs.movil)
+    private let uuidTexto = CBUUID(string: Protocolo.UUIDs.navText)
 
     private static let formatoHora: DateFormatter = {
         let formato = DateFormatter()
@@ -281,11 +291,14 @@ final class EnlaceBLE: NSObject, ObservableObject {
         caracInfo = nil
         caracStatus = nil
         caracMovil = nil
+        caracTexto = nil
         info = nil
         mantenimiento?.invalidate()
         mantenimiento = nil
         enviados.removeAll()
         envioPendiente = false
+        textoPendiente = false
+        primerTextoAnotado = false
         primerEnvioAnotado = false
         colaLlenaAnotada = false
         primerStatusAnotado = false
@@ -304,7 +317,7 @@ final class EnlaceBLE: NSObject, ObservableObject {
             anotar("La placa no muestra el servicio LPR. Si el iPhone recuerda los servicios antiguos, omite la placa en Ajustes > Bluetooth (PROTOCOLO.md §11)")
             return
         }
-        periferico.discoverCharacteristics([uuidInfo, uuidStatus, uuidMovil], for: servicio)
+        periferico.discoverCharacteristics([uuidInfo, uuidStatus, uuidMovil, uuidTexto], for: servicio)
     }
 
     private func caracteristicasDescubiertas(_ periferico: CBPeripheral, servicio: CBService, error: Error?) {
@@ -318,6 +331,7 @@ final class EnlaceBLE: NSObject, ObservableObject {
             case uuidInfo: caracInfo = caracteristica
             case uuidStatus: caracStatus = caracteristica
             case uuidMovil: caracMovil = caracteristica
+            case uuidTexto: caracTexto = caracteristica
             default: break
             }
         }
@@ -368,8 +382,14 @@ final class EnlaceBLE: NSObject, ObservableObject {
                     latenciaMs = Int(Date().timeIntervalSince(hora) * 1000)
                 }
             }
+            if let eco = status.ecoNavText {
+                ecoTexto = eco
+            }
             if status.pideReenvio {
                 enviarMovil()
+                if textoCuadro != nil {
+                    enviarTexto()
+                }
             }
         }
     }
@@ -405,17 +425,26 @@ final class EnlaceBLE: NSObject, ObservableObject {
 
     private func listo() {
         guard let periferico, let info else { return }
-        guard caracStatus != nil || caracMovil != nil else { return }
+        guard caracStatus != nil || caracMovil != nil || caracTexto != nil else { return }
         if let caracStatus {
             ignorarLatencia = true
             periferico.setNotifyValue(true, for: caracStatus)
         }
         estado = .conectado
-        guard info.capacidades.contains(.movil), caracMovil != nil else {
+        let conMovil = info.capacidades.contains(.movil) && caracMovil != nil
+        let conTexto = info.capacidades.contains(.navText) && caracTexto != nil
+        if !conMovil {
             anotar("La placa no admite MOVIL")
-            return
         }
+        if !conTexto {
+            anotar("La placa no admite NAV_TEXT (texto de navegación)")
+        }
+        guard conMovil || conTexto else { return }
+        // Al conectar, el estado completo sin esperar a ningún cambio (§10)
         enviarMovil()
+        if textoCuadro != nil {
+            enviarTexto()
+        }
         mantenimiento?.invalidate()
         mantenimiento = Timer.scheduledTimer(withTimeInterval: TimeInterval(Protocolo.mantenimientoSegundos),
                                              repeats: true) { [weak self] _ in
@@ -423,7 +452,41 @@ final class EnlaceBLE: NSObject, ObservableObject {
             // El temporizador va en el bucle principal: ya está en el actor principal
             MainActor.assumeIsolated {
                 self.enviarMovil()
+                // El texto, mientras lo haya (§7 bis)
+                if self.textoCuadro != nil {
+                    self.enviarTexto()
+                }
             }
+        }
+    }
+
+    // MARK: - Texto de navegación (NAV_TEXT, PROTOCOLO.md §7 bis)
+
+    /// Texto para la cara de navegación del cuadro. Se manda al cambiar y,
+    /// mientras lo haya, cada 2 s; nil (o vacío) manda una vez un texto vacío
+    /// para borrarlo.
+    func ponerTexto(_ texto: String?) {
+        let nuevo = (texto?.isEmpty ?? true) ? nil : texto
+        guard nuevo != textoCuadro else { return }
+        textoCuadro = nuevo
+        enviarTexto()
+    }
+
+    private func enviarTexto() {
+        guard estado == .conectado, let periferico, let caracTexto,
+              info?.capacidades.contains(.navText) == true else { return }
+        guard periferico.canSendWriteWithoutResponse else {
+            // Se manda en cuanto iOS avise de que hay hueco (peripheralIsReady)
+            textoPendiente = true
+            return
+        }
+        textoPendiente = false
+        let mensaje = MensajeNavText(secuencia: secuenciaTexto.siguiente(), texto: textoCuadro ?? "")
+        let bytes = mensaje.codificar(maximo: periferico.maximumWriteValueLength(for: .withoutResponse))
+        periferico.writeValue(Data(bytes), for: caracTexto, type: .withoutResponse)
+        if !primerTextoAnotado {
+            primerTextoAnotado = true
+            anotar("NAV_TEXT enviado (seq \(mensaje.secuencia), \(bytes.count) bytes)")
         }
     }
 
@@ -464,6 +527,9 @@ final class EnlaceBLE: NSObject, ObservableObject {
     private func listoParaEnviar() {
         if envioPendiente {
             enviarMovil()
+        }
+        if textoPendiente {
+            enviarTexto()
         }
     }
 

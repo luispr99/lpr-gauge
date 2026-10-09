@@ -1,7 +1,9 @@
-// Codificación y decodificación de los mensajes (docs/PROTOCOLO.md, v0.2).
+// Codificación y decodificación de los mensajes (docs/PROTOCOLO.md, v0.3).
 // Reglas comunes (sección 3): little-endian, primer byte = versión, campos
 // nuevos al final; el receptor ignora los bytes que sobran y descarta los
 // mensajes cortos o con una versión que no conoce.
+
+import Foundation
 
 /// Número de secuencia por característica: empieza en 0 y da la vuelta de 255 a 0.
 public struct Secuencia {
@@ -52,6 +54,48 @@ public struct MensajeMovil: Equatable {
     }
 }
 
+// MARK: - NAV_TEXT (sección 7 bis)
+
+public struct MensajeNavText: Equatable {
+    public static let longitudMinima = 2
+    /// Como mucho: 2 bytes de cabecera y 180 de texto.
+    public static let longitudMaxima = 182
+
+    public var secuencia: UInt8
+    /// UTF-8; vacío: no hay texto que mostrar.
+    public var texto: String
+
+    public init(secuencia: UInt8, texto: String) {
+        self.secuencia = secuencia
+        self.texto = texto
+    }
+
+    /// Bytes del mensaje, sin pasar de `maximo` (lo que admite la conexión) ni de
+    /// `longitudMaxima`. Si el texto no cabe, se corta sin partir un carácter
+    /// UTF-8.
+    public func codificar(maximo: Int = longitudMaxima) -> [UInt8] {
+        let caben = max(Self.longitudMinima, min(maximo, Self.longitudMaxima)) - Self.longitudMinima
+        var utf8 = Array(texto.utf8)
+        if utf8.count > caben {
+            var corte = caben
+            // El primer byte que se queda fuera no puede ser la continuación de
+            // un carácter (10xxxxxx): se retrocede hasta el principio de ese carácter
+            while corte > 0 && utf8[corte] & 0xC0 == 0x80 {
+                corte -= 1
+            }
+            utf8 = Array(utf8[0..<corte])
+        }
+        return [Protocolo.version, secuencia] + utf8
+    }
+
+    /// Descarta lo corto, otra versión y un texto que no sea UTF-8 válido.
+    public static func decodificar(_ bytes: [UInt8]) -> MensajeNavText? {
+        guard bytes.count >= longitudMinima, bytes[0] == Protocolo.version,
+              let texto = String(bytes: bytes[2...], encoding: .utf8) else { return nil }
+        return MensajeNavText(secuencia: bytes[1], texto: texto)
+    }
+}
+
 // MARK: - STATUS (sección 9)
 
 public struct MensajeStatus: Equatable {
@@ -62,17 +106,23 @@ public struct MensajeStatus: Equatable {
     public var pideReenvio: Bool
     /// nil si el dispositivo es anterior a la v0.2 (STATUS de 4 bytes).
     public var ecoMovil: UInt8?
+    /// nil si el dispositivo es anterior a la v0.3 (STATUS de menos de 6 bytes).
+    public var ecoNavText: UInt8?
 
-    public init(ecoNav: UInt8, ecoGPS: UInt8, pideReenvio: Bool, ecoMovil: UInt8?) {
+    public init(ecoNav: UInt8, ecoGPS: UInt8, pideReenvio: Bool, ecoMovil: UInt8?, ecoNavText: UInt8? = nil) {
         self.ecoNav = ecoNav
         self.ecoGPS = ecoGPS
         self.pideReenvio = pideReenvio
         self.ecoMovil = ecoMovil
+        self.ecoNavText = ecoMovil == nil ? nil : ecoNavText
     }
 
     public func codificar() -> [UInt8] {
         var bytes: [UInt8] = [Protocolo.version, ecoNav, ecoGPS, pideReenvio ? 0x01 : 0x00]
-        if let ecoMovil { bytes.append(ecoMovil) }
+        if let ecoMovil {
+            bytes.append(ecoMovil)
+            if let ecoNavText { bytes.append(ecoNavText) }
+        }
         return bytes
     }
 
@@ -82,7 +132,8 @@ public struct MensajeStatus: Equatable {
             ecoNav: bytes[1],
             ecoGPS: bytes[2],
             pideReenvio: bytes[3] & 0x01 != 0,
-            ecoMovil: bytes.count >= 5 ? bytes[4] : nil
+            ecoMovil: bytes.count >= 5 ? bytes[4] : nil,
+            ecoNavText: bytes.count >= 6 ? bytes[5] : nil
         )
     }
 }
