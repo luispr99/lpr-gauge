@@ -58,7 +58,9 @@ final class MensajesTests: XCTestCase {
         XCTAssertEqual(MensajeStatus.decodificar([0x01, 0x00, 0x00, 0x00, 0x07, 0x99]),
                        MensajeStatus(ecoNav: 0, ecoGPS: 0, pideReenvio: false, ecoMovil: 7, ecoNavText: 0x99))
         XCTAssertEqual(MensajeStatus.decodificar([0x01, 0x00, 0x00, 0x00, 0x07, 0x05, 0x99]),
-                       MensajeStatus(ecoNav: 0, ecoGPS: 0, pideReenvio: false, ecoMovil: 7, ecoNavText: 5))
+                       MensajeStatus(ecoNav: 0, ecoGPS: 0, pideReenvio: false, ecoMovil: 7, ecoNavText: 5, ecoTrazo: 0x99))
+        XCTAssertEqual(MensajeStatus.decodificar([0x01, 0x00, 0x00, 0x00, 0x07, 0x05, 0x03, 0x99]),
+                       MensajeStatus(ecoNav: 0, ecoGPS: 0, pideReenvio: false, ecoMovil: 7, ecoNavText: 5, ecoTrazo: 3))
     }
 
     func testStatusDescartaLoInvalido() {
@@ -72,6 +74,51 @@ final class MensajesTests: XCTestCase {
         let conTexto = MensajeStatus(ecoNav: 9, ecoGPS: 8, pideReenvio: false, ecoMovil: 7, ecoNavText: 6)
         XCTAssertEqual(conTexto.codificar(), [0x01, 0x09, 0x08, 0x00, 0x07, 0x06])
         XCTAssertEqual(MensajeStatus.decodificar(conTexto.codificar()), conTexto)
+        let conTrazo = MensajeStatus(ecoNav: 0, ecoGPS: 0, pideReenvio: false, ecoMovil: 7, ecoNavText: 6, ecoTrazo: 5)
+        XCTAssertEqual(conTrazo.codificar(), [0x01, 0x00, 0x00, 0x00, 0x07, 0x06, 0x05])
+        XCTAssertEqual(MensajeStatus.decodificar(conTrazo.codificar()), conTrazo)
+    }
+
+    // MARK: TRAZO
+
+    func testTrazoSinTramo() {
+        XCTAssertEqual(MensajeTrazo(secuencia: 5, puntos: [], giro: nil).codificar(), [0x01, 0x05, 0x00, 0xFF])
+        // Un solo punto no es un tramo
+        XCTAssertEqual(MensajeTrazo(secuencia: 5, puntos: [PuntoPlano(x: 0, y: 0)], giro: 0).codificar(),
+                       [0x01, 0x05, 0x00, 0xFF])
+    }
+
+    func testTrazoCodifica() {
+        let mensaje = MensajeTrazo(
+            secuencia: 2,
+            puntos: [PuntoPlano(x: 0, y: 0), PuntoPlano(x: 0, y: 100), PuntoPlano(x: -30, y: 150.4)],
+            giro: 1
+        )
+        XCTAssertEqual(mensaje.codificar(), [
+            0x01, 0x02, 0x01, 0x01,
+            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x64, 0x00,
+            0xE2, 0xFF, 0x96, 0x00,
+        ])
+    }
+
+    func testTrazoSaturaYRecorta() {
+        let lejos = MensajeTrazo(secuencia: 0, puntos: [PuntoPlano(x: 0, y: 0), PuntoPlano(x: 40_000, y: -40_000)], giro: nil)
+        XCTAssertEqual(Array(lejos.codificar().suffix(4)), [0xFF, 0x7F, 0x01, 0x80])
+        let muchos = (0..<60).map { PuntoPlano(x: 0, y: Double($0) * 10) }
+        XCTAssertEqual(MensajeTrazo(secuencia: 0, puntos: muchos, giro: 50).codificar().count, 180)
+        // Con el MTU mínimo (20 bytes), 4 puntos; el giro fuera de ellos no se manda
+        let corto = MensajeTrazo(secuencia: 0, puntos: muchos, giro: 10).codificar(maximo: 20)
+        XCTAssertEqual(corto.count, 20)
+        XCTAssertEqual(corto[3], 0xFF)
+    }
+
+    func testTrazoDecodifica() {
+        let original = MensajeTrazo(secuencia: 7, puntos: [PuntoPlano(x: 0, y: 0), PuntoPlano(x: -30, y: 150)], giro: 1)
+        XCTAssertEqual(MensajeTrazo.decodificar(original.codificar()), original)
+        XCTAssertEqual(MensajeTrazo.decodificar([0x01, 0x05, 0x00, 0xFF]), MensajeTrazo(secuencia: 5, puntos: [], giro: nil))
+        XCTAssertNil(MensajeTrazo.decodificar([0x01, 0x05, 0x00]))
+        XCTAssertNil(MensajeTrazo.decodificar([0x02, 0x05, 0x00, 0xFF]))
     }
 
     // MARK: NAV_TEXT
@@ -121,6 +168,12 @@ final class MensajesTests: XCTestCase {
         let info = DeviceInfo.decodificar([0x01, 0x01, 0x2C, 0x00, 0x00, 0x00, 0x01, 0x00])
         XCTAssertEqual(info, DeviceInfo(version: 1, tipo: 1, capacidades: [.status, .navText, .movil],
                                         frecuenciaMaxima: 0, firmware: [0, 1, 0]))
+    }
+
+    func testDeviceInfoDelCuadroConTrazo() {
+        let info = DeviceInfo.decodificar([0x01, 0x01, 0x6C, 0x00, 0x00, 0x00, 0x02, 0x00])
+        XCTAssertEqual(info?.capacidades, [.status, .navText, .movil, .trazo])
+        XCTAssertEqual(info?.firmware, [0, 2, 0])
     }
 
     func testDeviceInfoDescartaLoCorto() {

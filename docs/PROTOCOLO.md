@@ -1,6 +1,6 @@
 # Protocolo BLE móvil → cuadro
 
-> **Estado: borrador v0.3 (2026-10-09), sin validar.** Los puntos marcados
+> **Estado: borrador v0.4 (2026-10-09), sin validar.** Los puntos marcados
 > **[PENDIENTE]** faltan por completar. Mientras sea borrador, nada de lo que hay
 > aquí es definitivo y puede cambiar sin mantener compatibilidad. Los cambios de
 > cada versión están en la [sección 13](#13-cambios).
@@ -34,6 +34,7 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
 | `NAV_TEXT` | `f4640006-813a-45b8-8ca8-f5f9e18c21d1` | escritura sin respuesta (el cuadro acepta también con respuesta) | cifrado | ≤ 182 B (sección 7 bis) |
 | `CONFIG` | `f4640007-813a-45b8-8ca8-f5f9e18c21d1` | reservado | — | — |
 | `MOVIL` | `f4640008-813a-45b8-8ca8-f5f9e18c21d1` | escritura sin respuesta | cifrado | ≤ 20 B |
+| `TRAZO` | `f4640009-813a-45b8-8ca8-f5f9e18c21d1` | escritura sin respuesta | cifrado | ≤ 180 B (sección 7 ter) |
 
 - **Anuncio:** el UUID del servicio va en el **paquete principal**, no en la
   respuesta de escaneo. iOS, en segundo plano, solo encuentra periféricos
@@ -52,8 +53,9 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
   o empareja y la repite sola. Las escrituras sin respuesta no tienen respuesta,
   así que un rechazo no avisaría a iOS de que tiene que cifrar.
 - **Mensajes de 20 bytes como máximo:** caben con el MTU mínimo (23). Aun así, la
-  app consulta `maximumWriteValueLength(for:)` en tiempo de ejecución. La única
-  excepción es `NAV_TEXT` (sección 7 bis), que se ajusta al MTU de la conexión.
+  app consulta `maximumWriteValueLength(for:)` en tiempo de ejecución. Las
+  excepciones son `NAV_TEXT` (sección 7 bis) y `TRAZO` (sección 7 ter), que se
+  ajustan al MTU de la conexión.
 
 ## 3. Reglas comunes de codificación
 
@@ -75,7 +77,7 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
 |---|---|---|---|
 | 0 | versión | u8 | Versión del protocolo del dispositivo: 1. |
 | 1 | tipo | u8 | 1 = cuadro de moto; 2 = firmware de referencia (solo serie). |
-| 2-3 | capacidades | u16 | Bit 0 `NAV`, bit 1 `GPS`, bit 2 `STATUS`, bit 3 `NAV_TEXT`, bit 4 `CONFIG`, bit 5 `MOVIL`. |
+| 2-3 | capacidades | u16 | Bit 0 `NAV`, bit 1 `GPS`, bit 2 `STATUS`, bit 3 `NAV_TEXT`, bit 4 `CONFIG`, bit 5 `MOVIL`, bit 6 `TRAZO`. |
 | 4 | frecuencia máxima | u8 | Mensajes por segundo y característica que acepta (0 = sin límite). |
 | 5-7 | versión de firmware | u8 × 3 | Mayor, menor, parche. |
 
@@ -162,6 +164,32 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
 - **Caracteres:** el cuadro muestra los que tenga su fuente; los demás los cambia
   por su letra base (por ejemplo, «à» por «a») o los quita.
 
+## 7 ter. `TRAZO` (escritura sin respuesta): tramo de ruta por delante
+
+| Byte | Campo | Tipo | Descripción |
+|---|---|---|---|
+| 0 | versión | u8 | 1 |
+| 1 | secuencia | u8 | |
+| 2 | flags | u8 | Bit 0: hay tramo. A cero, el dispositivo deja de dibujarlo (fuera de ruta, recalculando o sin ruta). |
+| 3 | giro | u8 | Índice, en la lista de puntos, del próximo giro; 255 si no está en el tramo. |
+| 4… | puntos | (i16, i16) × n | Metros desde la moto, con el sentido de la marcha hacia arriba: x a la derecha e y hacia delante. El primero es la posición de la moto sobre la ruta, (0, 0). |
+
+- Longitud mínima: 4 bytes. Con el bit 0 a uno hacen falta al menos dos puntos;
+  si no, es como si estuviera a cero.
+- Añadido en la v0.4 (2026-10-09), para dibujar en el cuadro el tramo siguiente
+  de la ruta al estilo de los navegadores minimalistas.
+- **Tamaño:** como mucho 44 puntos (180 bytes) y nunca más de lo que admita la
+  conexión (`maximumWriteValueLength(for: .withoutResponse)`; con el MTU mínimo,
+  4 puntos). La app simplifica el tramo para que quepa.
+- **Qué tramo:** la app manda la ruta desde la posición de la moto hasta unos
+  metros por delante que decide ella (más cerca del giro, menos metros: así el
+  dispositivo, que ajusta la escala al tramo, se acerca al llegar al giro). El
+  sentido de la marcha es el rumbo de la ruta unos metros por delante, no el
+  del GPS.
+- **Ritmo:** la app lo manda al cambiar, como mucho una vez por segundo, y como
+  mínimo cada 2 s mientras haya tramo. Al dejar de haberlo manda uno con el
+  bit 0 a cero. El dispositivo lo da por caducado a los 5 s.
+
 ## 8. Códigos de maniobra
 
 **[PENDIENTE]** Ferrostar entrega cada maniobra como tipo y modificador al estilo
@@ -179,10 +207,12 @@ códigos 0-30 de *Komoot BLE Connect*, como se planteó al principio.
 | 3 | flags | u8 | Bit 0 pide reenvío completo (por ejemplo, tras reiniciarse). |
 | 4 | eco `MOVIL` | u8 | Última secuencia de `MOVIL` recibida (añadido en la v0.2). |
 | 5 | eco `NAV_TEXT` | u8 | Última secuencia de `NAV_TEXT` recibida (añadido en la v0.3). |
+| 6 | eco `TRAZO` | u8 | Última secuencia de `TRAZO` recibida (añadido en la v0.4). |
 
 - Longitud mínima: 4 bytes. Un `STATUS` de 4 bytes viene de un dispositivo
   anterior a la v0.2 y no trae eco de `MOVIL`; uno de 5, de uno anterior a la
-  v0.3, sin eco de `NAV_TEXT`.
+  v0.3, sin eco de `NAV_TEXT`; uno de 6, de uno anterior a la v0.4, sin eco de
+  `TRAZO`.
 - Mientras no ha recibido nada de una característica, su eco vale 0.
 - El dispositivo notifica `STATUS` al suscribirse la app, después de cada
   escritura recibida y, como mínimo, cada 2 s.
@@ -197,8 +227,13 @@ códigos 0-30 de *Komoot BLE Connect*, como se planteó al principio.
 - La app **no supone un ritmo fijo de GPS**: Apple no publica ni garantiza una
   frecuencia.
 - La app manda `NAV`, `GPS` y `MOVIL` en cada cambio y, como mínimo, cada 2 s
-  (mantenimiento), aunque no cambie nada. `NAV_TEXT`, igual mientras haya texto
-  (sección 7 bis).
+  (mantenimiento), aunque no cambie nada. `NAV_TEXT` y `TRAZO`, igual mientras
+  haya texto o tramo (secciones 7 bis y 7 ter).
+- La app manda además el mantenimiento al recibir cada `STATUS`, si han pasado
+  1,5 s o más desde el anterior, y siempre que el `STATUS` pida reenvío. Es para
+  el **segundo plano** (y la pantalla bloqueada): los avisos BLE despiertan a la
+  app aunque iOS la haya suspendido y su temporizador no se dispare; con el
+  `STATUS` periódico del dispositivo (cada 2 s) basta.
 - El cuadro da por **caducado** un dato si pasan más de **5 s** sin recibir su
   característica (decidido el 2026-10-08). Entonces muestra el mismo aviso que
   sin GPS.
@@ -237,6 +272,10 @@ códigos 0-30 de *Komoot BLE Connect*, como se planteó al principio.
 
 ## 13. Cambios
 
+- **v0.4 (2026-10-09):** característica `TRAZO` (sección 7 ter), bit 6 de
+  capacidades, eco de `TRAZO` en el byte 6 de `STATUS` y mantenimiento al
+  recibir `STATUS` en segundo plano (sección 10). La versión del formato sigue
+  siendo 1.
 - **v0.3 (2026-10-09):** característica `NAV_TEXT` (sección 7 bis), la única que
   puede pasar de 20 bytes; eco de `NAV_TEXT` en el byte 5 de `STATUS`. El
   cuadro integra el servicio LPR (tipo 1, capacidades `STATUS`, `NAV_TEXT` y

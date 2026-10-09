@@ -1,5 +1,5 @@
 // Constantes del protocolo BLE móvil → cuadro. La fuente de verdad es
-// docs/PROTOCOLO.md (borrador v0.3): si cambia el documento, cambia esto.
+// docs/PROTOCOLO.md (borrador v0.4): si cambia el documento, cambia esto.
 
 public enum Protocolo {
     /// Versión del formato de los mensajes (sección 3).
@@ -15,6 +15,7 @@ public enum Protocolo {
         public static let status     = "f4640005-813a-45b8-8ca8-f5f9e18c21d1"
         public static let navText    = "f4640006-813a-45b8-8ca8-f5f9e18c21d1"
         public static let movil      = "f4640008-813a-45b8-8ca8-f5f9e18c21d1"
+        public static let trazo      = "f4640009-813a-45b8-8ca8-f5f9e18c21d1"
     }
 
     /// Sin recibir datos durante este tiempo, el cuadro muestra el aviso (sección 10).

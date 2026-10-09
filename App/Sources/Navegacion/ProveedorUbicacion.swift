@@ -11,7 +11,8 @@ import FerrostarCoreFFI
 ///   hasta volver a abrir la app;
 /// - hace falta la altitud, que el `UserLocation` de Ferrostar no lleva.
 ///
-/// De momento solo en primer plano: el modo de fondo llega en el paso siguiente.
+/// Mientras se guía, sigue en segundo plano y con la pantalla bloqueada
+/// (`guiadoEnFondo`, 2026-10-09; docs/DECISIONES.md).
 final class ProveedorUbicacion: NSObject, LocationProviding, CLLocationManagerDelegate {
     weak var delegate: LocationManagingDelegate?
     private(set) var authorizationStatus: CLAuthorizationStatus
@@ -42,6 +43,33 @@ final class ProveedorUbicacion: NSObject, LocationProviding, CLLocationManagerDe
 
     func stopUpdating() {
         gestor.stopUpdatingLocation()
+    }
+
+    /// Sesión que mantiene el permiso «Cuando se use» con la app en segundo
+    /// plano (iOS 17; WWDC23 10180). Hay que guardarla: si se libera, se acaba.
+    private var sesionFondo: CLBackgroundActivitySession?
+
+    /// Guiado con la app en segundo plano y la pantalla bloqueada. Hay que
+    /// llamarlo en primer plano (al pulsar «Iniciar»): Core Location no deja
+    /// empezar en segundo plano. Activa las actualizaciones en segundo plano,
+    /// crea la sesión y vuelve a arrancar el GPS con la propiedad ya puesta,
+    /// como pide la documentación. Sin el modo `location` en el Info.plist,
+    /// activar la propiedad cerraría la app, así que se comprueba antes
+    func guiadoEnFondo(_ activo: Bool) {
+        let modos = Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String] ?? []
+        guard modos.contains("location") else { return }
+        gestor.allowsBackgroundLocationUpdates = activo
+        gestor.showsBackgroundLocationIndicator = activo
+        if activo {
+            if sesionFondo == nil {
+                sesionFondo = CLBackgroundActivitySession()
+            }
+            gestor.stopUpdatingLocation()
+            gestor.startUpdatingLocation()
+        } else {
+            sesionFondo?.invalidate()
+            sesionFondo = nil
+        }
     }
 
     // MARK: - CLLocationManagerDelegate

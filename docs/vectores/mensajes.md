@@ -1,7 +1,7 @@
 # Vectores de prueba del protocolo
 
 Ejemplos de mensajes con sus bytes exactos, en hexadecimal y en el orden en que
-viajan. Salen de [PROTOCOLO.md](../PROTOCOLO.md) (v0.3). Las pruebas de `Core`
+viajan. Salen de [PROTOCOLO.md](../PROTOCOLO.md) (v0.4). Las pruebas de `Core`
 (`Core/Tests/LPRCoreTests/MensajesTests.swift`) comprueban estos mismos bytes; el
 firmware y la app de Android deberán pasar los mismos. Si cambia un vector,
 cambian a la vez el documento, las pruebas y este fichero.
@@ -22,13 +22,14 @@ cambian a la vez el documento, las pruebas y este fichero.
 
 ## `STATUS`
 
-| Caso | Bytes | Eco `NAV` | Eco `GPS` | Pide reenvío | Eco `MOVIL` | Eco `NAV_TEXT` |
-|---|---|---|---|---|---|---|
-| v0.2, recién arrancado | `01 00 00 01 00` | 0 | 0 | sí | 0 | sin dato |
-| v0.2, tras recibir `MOVIL` 7 | `01 00 00 00 07` | 0 | 0 | no | 7 | sin dato |
-| v0.1 (4 bytes) | `01 03 04 00` | 3 | 4 | no | sin dato | sin dato |
-| v0.3 (6 bytes) | `01 00 00 00 07 99` | 0 | 0 | no | 7 | 153 |
-| v0.3 con un byte de más | `01 00 00 00 07 05 99` | 0 | 0 | no | 7 | 5 |
+| Caso | Bytes | Eco `NAV` | Eco `GPS` | Pide reenvío | Eco `MOVIL` | Eco `NAV_TEXT` | Eco `TRAZO` |
+|---|---|---|---|---|---|---|---|
+| v0.2, recién arrancado | `01 00 00 01 00` | 0 | 0 | sí | 0 | sin dato | sin dato |
+| v0.2, tras recibir `MOVIL` 7 | `01 00 00 00 07` | 0 | 0 | no | 7 | sin dato | sin dato |
+| v0.1 (4 bytes) | `01 03 04 00` | 3 | 4 | no | sin dato | sin dato | sin dato |
+| v0.3 (6 bytes) | `01 00 00 00 07 99` | 0 | 0 | no | 7 | 153 | sin dato |
+| v0.4 (7 bytes) | `01 00 00 00 07 05 99` | 0 | 0 | no | 7 | 5 | 153 |
+| v0.4 con un byte de más | `01 00 00 00 07 05 03 99` | 0 | 0 | no | 7 | 5 | 3 |
 
 - Se descarta `01 00 00` (corto) y cualquier mensaje con versión distinta de 1.
 
@@ -47,11 +48,26 @@ cambian a la vez el documento, las pruebas y este fichero.
 - Al decodificar, se descartan `01` (corto), `02 00 41` (versión desconocida) y
   `01 00 C3` (UTF-8 no válido).
 
+## `TRAZO`
+
+| Caso | Bytes |
+|---|---|
+| Sin tramo, secuencia 5 | `01 05 00 FF` |
+| Secuencia 2, giro en el punto 1: (0, 0), (0, 100) y (−30, 150) | `01 02 01 01 00 00 00 00 00 00 64 00 E2 FF 96 00` |
+
+- Coordenadas en metros redondeados, `i16` *little-endian*; se saturan en
+  ±32 767 (por ejemplo, (40 000, −40 000) va como `FF 7F 01 80`).
+- Como mucho 44 puntos (180 bytes). Con 20 bytes por escritura caben 4; un giro
+  que quede fuera va como 255.
+- Al decodificar, se descartan `01 05 00` (corto) y la versión 2. Con el bit 0
+  a cero o menos de dos puntos, no hay tramo.
+
 ## `DEVICE_INFO`
 
 | Caso | Bytes | Tipo | Capacidades | Frecuencia | Firmware |
 |---|---|---|---|---|---|
 | Firmware de referencia 0.1.0 | `01 02 24 00 00 00 01 00` | 2 | `STATUS` + `MOVIL` (0x0024) | sin límite | 0.1.0 |
 | Cuadro, primera integración LPR | `01 01 2C 00 00 00 01 00` | 1 | `STATUS` + `NAV_TEXT` + `MOVIL` (0x002C) | sin límite | 0.1.0 |
+| Cuadro con el trazo | `01 01 6C 00 00 00 02 00` | 1 | `STATUS` + `NAV_TEXT` + `MOVIL` + `TRAZO` (0x006C) | sin límite | 0.2.0 |
 
 - Se descarta cualquier mensaje de menos de 8 bytes.

@@ -314,6 +314,47 @@ final.
     está en ella, no suman el tiempo de conducción ni las horas de motor del
     cuadro.
 
+### 2026-10-09 · Recorrido en el cuadro y guiado en segundo plano (0.9.0)
+
+- **Petición del autor:** ver en el cuadro parte del recorrido, al estilo
+  minimalista de Beeline, y que la navegación siga con el iPhone fuera de la app
+  y la pantalla bloqueada. Para la cara eligió la disposición «B»: el tramo de
+  ruta arriba y la distancia y la instrucción debajo.
+- **Protocolo v0.4** (`PROTOCOLO.md`): `TRAZO` (sección 7 ter), el tramo de
+  ruta por delante en metros, en los ejes de la moto, hasta 44 puntos; eco en el
+  byte 6 de `STATUS`; mantenimiento también al recibir `STATUS` (sección 10).
+- **Qué tramo** (`Core/Sources/LPRCore/Trazo.swift`):
+  - desde la posición de la moto ajustada a la ruta (la de Ferrostar), por los
+    pasos que quedan, hasta 150 m después del próximo giro, entre 250 y
+    1000 m (supuesto a ajustar en la moto). Al acercarse al giro el tramo se
+    acorta y el cuadro, que ajusta la escala, se acerca;
+  - el sentido de la marcha es el rumbo de la ruta hasta 25 m por delante, no
+    el del GPS, que salta parado y a poca velocidad;
+  - se simplifica (Douglas-Peucker) hasta que quepa en la conexión;
+  - fuera de ruta, recalculando o al llegar no hay tramo; el texto dice «Fuera
+    de ruta» o «Recalculando la ruta…».
+- **Segundo plano:**
+  - modos `location` y `bluetooth-central` en el Info.plist. No son
+    entitlements: valen con la cuenta gratuita [F6];
+  - al pulsar «Iniciar» (en primer plano, como exige Core Location):
+    `allowsBackgroundLocationUpdates`, el indicador azul y una
+    `CLBackgroundActivitySession`, que mantiene el permiso «Al usarse la app»
+    en segundo plano desde iOS 17 [F3] [F40]. Al terminar se quitan;
+  - el texto y el tramo pasan de la navegación al enlace BLE directamente, sin
+    pasar por las vistas de SwiftUI, que en segundo plano pueden no
+    actualizarse;
+  - con la app suspendida su temporizador no se dispara; los avisos de
+    `STATUS` del cuadro sí la despiertan [F41], y con ellos se manda el
+    mantenimiento.
+- **Riesgos sin comprobar:** que Sideloadly conserve los modos al volver a
+  firmar; los huecos sin posiciones en iOS 27 [F12]; si el usuario cierra la
+  app deslizándola, iOS no la vuelve a lanzar [F13].
+- **Cuadro:** se describe en su `docs/CAMBIOS_CLAUDE.md`, sección 75 (el código
+  no entra en este repositorio). Recibe `TRAZO` y lo dibuja con una línea de
+  LVGL y un marcador de la moto; la distancia y la instrucción van debajo. El
+  rayo verde va ahora encima del icono del móvil, que con la carga toma el
+  color del tema.
+
 ### 2026-10-09 · Navegación: servidores, buscador y Ferrostar
 
 - **Origen:** el autor propuso usar lo mismo que la web
@@ -680,3 +721,11 @@ Ferrostar:
   https://developer.apple.com/documentation/mapkit/mapcontent/stroke(_:style:)
 - [F39] SFSafeSymbols 7.0.0 (disponibilidad de SF Symbols, de terceros;
   consultado el 2026-10-09): https://github.com/SFSafeSymbols/SFSafeSymbols
+- [F40] Apple, ubicación en segundo plano (consultado el 2026-10-09):
+  https://developer.apple.com/documentation/corelocation/handling-location-updates-in-the-background ·
+  https://developer.apple.com/documentation/corelocation/cllocationmanager/allowsbackgroundlocationupdates ·
+  WWDC23 «Discover streamlined location updates»:
+  https://developer.apple.com/videos/play/wwdc2023/10180/
+- [F41] Apple, Core Bluetooth en segundo plano (guía archivada; consultada el
+  2026-10-09):
+  https://developer.apple.com/library/archive/documentation/NetworkingInternetWeb/Conceptual/CoreBluetooth_concepts/CoreBluetoothBackgroundProcessingForIOSApps/PerformingTasksWhileYourAppIsInTheBackground.html

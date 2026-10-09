@@ -1,4 +1,4 @@
-// Codificación y decodificación de los mensajes (docs/PROTOCOLO.md, v0.3).
+// Codificación y decodificación de los mensajes (docs/PROTOCOLO.md, v0.4).
 // Reglas comunes (sección 3): little-endian, primer byte = versión, campos
 // nuevos al final; el receptor ignora los bytes que sobran y descarta los
 // mensajes cortos o con una versión que no conoce.
@@ -108,20 +108,27 @@ public struct MensajeStatus: Equatable {
     public var ecoMovil: UInt8?
     /// nil si el dispositivo es anterior a la v0.3 (STATUS de menos de 6 bytes).
     public var ecoNavText: UInt8?
+    /// nil si el dispositivo es anterior a la v0.4 (STATUS de menos de 7 bytes).
+    public var ecoTrazo: UInt8?
 
-    public init(ecoNav: UInt8, ecoGPS: UInt8, pideReenvio: Bool, ecoMovil: UInt8?, ecoNavText: UInt8? = nil) {
+    public init(ecoNav: UInt8, ecoGPS: UInt8, pideReenvio: Bool, ecoMovil: UInt8?,
+                ecoNavText: UInt8? = nil, ecoTrazo: UInt8? = nil) {
         self.ecoNav = ecoNav
         self.ecoGPS = ecoGPS
         self.pideReenvio = pideReenvio
         self.ecoMovil = ecoMovil
         self.ecoNavText = ecoMovil == nil ? nil : ecoNavText
+        self.ecoTrazo = self.ecoNavText == nil ? nil : ecoTrazo
     }
 
     public func codificar() -> [UInt8] {
         var bytes: [UInt8] = [Protocolo.version, ecoNav, ecoGPS, pideReenvio ? 0x01 : 0x00]
         if let ecoMovil {
             bytes.append(ecoMovil)
-            if let ecoNavText { bytes.append(ecoNavText) }
+            if let ecoNavText {
+                bytes.append(ecoNavText)
+                if let ecoTrazo { bytes.append(ecoTrazo) }
+            }
         }
         return bytes
     }
@@ -133,8 +140,81 @@ public struct MensajeStatus: Equatable {
             ecoGPS: bytes[2],
             pideReenvio: bytes[3] & 0x01 != 0,
             ecoMovil: bytes.count >= 5 ? bytes[4] : nil,
-            ecoNavText: bytes.count >= 6 ? bytes[5] : nil
+            ecoNavText: bytes.count >= 6 ? bytes[5] : nil,
+            ecoTrazo: bytes.count >= 7 ? bytes[6] : nil
         )
+    }
+}
+
+// MARK: - TRAZO (sección 7 ter)
+
+public struct MensajeTrazo: Equatable {
+    public static let longitudMinima = 4
+    /// Como mucho: 4 bytes de cabecera y 44 puntos de 4 bytes (180 bytes).
+    public static let maximoPuntos = 44
+
+    public var secuencia: UInt8
+    /// Metros en los ejes de la moto (Trazo); con menos de dos, no hay tramo.
+    public var puntos: [PuntoPlano]
+    /// Índice del próximo giro en `puntos`, o nil.
+    public var giro: Int?
+
+    public init(secuencia: UInt8, puntos: [PuntoPlano], giro: Int?) {
+        self.secuencia = secuencia
+        self.puntos = puntos
+        self.giro = giro
+    }
+
+    /// Cuántos puntos caben en `maximo` bytes (lo que admite la conexión), sin
+    /// pasar de 44.
+    public static func puntosQueCaben(_ maximo: Int) -> Int {
+        max(0, min(maximoPuntos, (maximo - longitudMinima) / 4))
+    }
+
+    /// Bytes del mensaje, sin pasar de `maximo`: si no caben todos los puntos,
+    /// se mandan los primeros (el tramo se acorta). Las coordenadas se
+    /// redondean al metro y se saturan en ±32 767.
+    public func codificar(maximo: Int = longitudMinima + 4 * maximoPuntos) -> [UInt8] {
+        let caben = Self.puntosQueCaben(maximo)
+        let lista = Array(puntos.prefix(caben))
+        let hay = lista.count >= 2
+        let indiceGiro: UInt8
+        if hay, let giro, giro >= 0, giro < lista.count {
+            indiceGiro = UInt8(giro)
+        } else {
+            indiceGiro = 255
+        }
+        var bytes: [UInt8] = [Protocolo.version, secuencia, hay ? 0x01 : 0x00, indiceGiro]
+        guard hay else { return bytes }
+        for punto in lista {
+            for valor in [punto.x, punto.y] {
+                let metros = valor.isFinite ? min(32_767, max(-32_767, valor.rounded())) : 0
+                let entero = Int16(metros)
+                let sinSigno = UInt16(bitPattern: entero)
+                bytes.append(UInt8(sinSigno & 0xFF))
+                bytes.append(UInt8(sinSigno >> 8))
+            }
+        }
+        return bytes
+    }
+
+    /// Descarta lo corto y otra versión. Sin el bit 0, o con menos de dos
+    /// puntos, sin tramo (puntos vacíos).
+    public static func decodificar(_ bytes: [UInt8]) -> MensajeTrazo? {
+        guard bytes.count >= longitudMinima, bytes[0] == Protocolo.version else { return nil }
+        var puntos: [PuntoPlano] = []
+        if bytes[2] & 0x01 != 0 {
+            var i = longitudMinima
+            while i + 3 < bytes.count {
+                let x = Int16(bitPattern: UInt16(bytes[i]) | UInt16(bytes[i + 1]) << 8)
+                let y = Int16(bitPattern: UInt16(bytes[i + 2]) | UInt16(bytes[i + 3]) << 8)
+                puntos.append(PuntoPlano(x: Double(x), y: Double(y)))
+                i += 4
+            }
+        }
+        if puntos.count < 2 { puntos = [] }
+        let giro: Int? = (bytes[3] == 255 || Int(bytes[3]) >= puntos.count) ? nil : Int(bytes[3])
+        return MensajeTrazo(secuencia: bytes[1], puntos: puntos, giro: giro)
     }
 }
 
@@ -150,6 +230,7 @@ public struct Capacidades: OptionSet, Equatable {
     public static let navText = Capacidades(rawValue: 1 << 3)
     public static let config  = Capacidades(rawValue: 1 << 4)
     public static let movil   = Capacidades(rawValue: 1 << 5)
+    public static let trazo   = Capacidades(rawValue: 1 << 6)
 }
 
 public struct DeviceInfo: Equatable {

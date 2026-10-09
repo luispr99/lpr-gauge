@@ -11,8 +11,8 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "0.8.3"
-    CURRENT_PROJECT_VERSION: "16"
+    MARKETING_VERSION: "0.9.0"
+    CURRENT_PROJECT_VERSION: "17"
     SWIFT_VERSION: "5.0"
 
 packages:
@@ -54,6 +54,12 @@ targets:
         NSLocationWhenInUseUsageDescription: >-
           LPR Gauge usa tu ubicación para calcular la ruta, guiarte giro a giro y
           mostrar la altitud.
+        # Segundo plano (2026-10-09): el guiado sigue con la pantalla bloqueada
+        # (ubicación) y el enlace con el cuadro también (Bluetooth). No son
+        # entitlements: valen con la cuenta gratuita (docs/DECISIONES.md)
+        UIBackgroundModes:
+          - location
+          - bluetooth-central
     settings:
       base:
         # Fijo desde el primer día: la cuenta gratuita solo admite 10 App IDs

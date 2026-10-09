@@ -5,9 +5,10 @@ import UIKit
 import LPRCore
 
 /// Enlace BLE con el cuadro o con el firmware de referencia (docs/PROTOCOLO.md,
-/// v0.2). Prueba del enlace: manda `MOVIL` (estado de la batería del iPhone) y
-/// lee `STATUS`. De momento solo en primer plano: sin modo de fondo ni
-/// restauración de estado.
+/// v0.4). Manda `MOVIL` (estado de la batería del iPhone), `NAV_TEXT` (texto de
+/// la navegación) y `TRAZO` (tramo de ruta por delante), y lee `STATUS`. En
+/// segundo plano sigue con el modo `bluetooth-central`: cada `STATUS` despierta
+/// a la app y sirve de mantenimiento (§10). Sin restauración de estado.
 ///
 /// Core Bluetooth entrega sus avisos en la cola principal (`queue: nil`), así que
 /// los métodos de los delegados pasan al actor principal con `assumeIsolated`.
@@ -47,6 +48,9 @@ final class EnlaceBLE: NSObject, ObservableObject {
     /// texto, y el último eco de la placa.
     @Published private(set) var textoCuadro: String?
     @Published private(set) var ecoTexto: UInt8?
+    /// Si se está mandando un tramo de ruta (TRAZO), y el último eco de la placa.
+    @Published private(set) var trazoActivo = false
+    @Published private(set) var ecoTrazo: UInt8?
 
     private var central: CBCentralManager?
     private var periferico: CBPeripheral?
@@ -54,11 +58,18 @@ final class EnlaceBLE: NSObject, ObservableObject {
     private var caracStatus: CBCharacteristic?
     private var caracMovil: CBCharacteristic?
     private var caracTexto: CBCharacteristic?
+    private var caracTrazo: CBCharacteristic?
     private var secuencia = Secuencia()
     /// Cada característica lleva su secuencia (PROTOCOLO.md §3).
     private var secuenciaTexto = Secuencia()
+    private var secuenciaTrazo = Secuencia()
     private var textoPendiente = false
+    private var trazoPendiente = false
     private var primerTextoAnotado = false
+    private var primerTrazoAnotado = false
+    /// Último mantenimiento (MOVIL, texto y tramo) y último TRAZO mandados.
+    private var ultimoMantenimiento: Date?
+    private var ultimoTrazo: Date?
     /// Hora de envío de cada secuencia pendiente de eco, para la latencia.
     private var enviados: [UInt8: Date] = [:]
     /// El primer STATUS tras suscribirse puede traer el eco 0 de «aún no he
@@ -82,6 +93,7 @@ final class EnlaceBLE: NSObject, ObservableObject {
     private let uuidStatus = CBUUID(string: Protocolo.UUIDs.status)
     private let uuidMovil = CBUUID(string: Protocolo.UUIDs.movil)
     private let uuidTexto = CBUUID(string: Protocolo.UUIDs.navText)
+    private let uuidTrazo = CBUUID(string: Protocolo.UUIDs.trazo)
 
     override init() {
         super.init()
@@ -285,13 +297,18 @@ final class EnlaceBLE: NSObject, ObservableObject {
         caracStatus = nil
         caracMovil = nil
         caracTexto = nil
+        caracTrazo = nil
         info = nil
         mantenimiento?.invalidate()
         mantenimiento = nil
+        ultimoMantenimiento = nil
+        ultimoTrazo = nil
         enviados.removeAll()
         envioPendiente = false
         textoPendiente = false
+        trazoPendiente = false
         primerTextoAnotado = false
+        primerTrazoAnotado = false
         primerEnvioAnotado = false
         colaLlenaAnotada = false
         primerStatusAnotado = false
@@ -310,7 +327,7 @@ final class EnlaceBLE: NSObject, ObservableObject {
             anotar("La placa no muestra el servicio LPR. Si el iPhone recuerda los servicios antiguos, omite la placa en Ajustes > Bluetooth (PROTOCOLO.md §11)")
             return
         }
-        periferico.discoverCharacteristics([uuidInfo, uuidStatus, uuidMovil, uuidTexto], for: servicio)
+        periferico.discoverCharacteristics([uuidInfo, uuidStatus, uuidMovil, uuidTexto, uuidTrazo], for: servicio)
     }
 
     private func caracteristicasDescubiertas(_ periferico: CBPeripheral, servicio: CBService, error: Error?) {
@@ -325,6 +342,7 @@ final class EnlaceBLE: NSObject, ObservableObject {
             case uuidStatus: caracStatus = caracteristica
             case uuidMovil: caracMovil = caracteristica
             case uuidTexto: caracTexto = caracteristica
+            case uuidTrazo: caracTrazo = caracteristica
             default: break
             }
         }
@@ -378,11 +396,18 @@ final class EnlaceBLE: NSObject, ObservableObject {
             if let eco = status.ecoNavText {
                 ecoTexto = eco
             }
+            if let eco = status.ecoTrazo {
+                ecoTrazo = eco
+            }
+            // Mantenimiento también al recibir STATUS (§10): en segundo plano el
+            // temporizador puede no dispararse, y cada aviso de la placa
+            // despierta a la app. Si la placa pide reenvío, siempre
+            guard mantenimiento != nil else { return }
             if status.pideReenvio {
-                enviarMovil()
-                if textoCuadro != nil {
-                    enviarTexto()
-                }
+                mantener()
+            } else if let ultimo = ultimoMantenimiento,
+                      Date().timeIntervalSince(ultimo) >= Self.mantenimientoPorStatus {
+                mantener()
             }
         }
     }
@@ -426,29 +451,24 @@ final class EnlaceBLE: NSObject, ObservableObject {
         estado = .conectado
         let conMovil = info.capacidades.contains(.movil) && caracMovil != nil
         let conTexto = info.capacidades.contains(.navText) && caracTexto != nil
+        let conTrazo = admiteTrazo
         if !conMovil {
             anotar("La placa no admite MOVIL")
         }
         if !conTexto {
             anotar("La placa no admite NAV_TEXT (texto de navegación)")
         }
-        guard conMovil || conTexto else { return }
-        // Al conectar, el estado completo sin esperar a ningún cambio (§10)
-        enviarMovil()
-        if textoCuadro != nil {
-            enviarTexto()
+        if !conTrazo {
+            anotar("La placa no admite TRAZO (tramo de ruta)")
         }
+        guard conMovil || conTexto || conTrazo else { return }
         mantenimiento?.invalidate()
         let temporizador = Timer(timeInterval: TimeInterval(Protocolo.mantenimientoSegundos),
                                  repeats: true) { [weak self] _ in
             guard let self else { return }
             // El temporizador va en el bucle principal: ya está en el actor principal
             MainActor.assumeIsolated {
-                self.enviarMovil()
-                // El texto, mientras lo haya (§7 bis)
-                if self.textoCuadro != nil {
-                    self.enviarTexto()
-                }
+                self.mantener()
             }
         }
         // En los modos comunes: en el modo por defecto no se dispara mientras se
@@ -456,7 +476,26 @@ final class EnlaceBLE: NSObject, ObservableObject {
         // dato por caducado (lo vio la revisión)
         RunLoop.main.add(temporizador, forMode: .common)
         mantenimiento = temporizador
+        // Al conectar, el estado completo sin esperar a ningún cambio (§10)
+        mantener()
     }
+
+    /// Mantenimiento (§10): MOVIL siempre; el texto y el tramo, mientras los haya.
+    private func mantener() {
+        ultimoMantenimiento = Date()
+        enviarMovil()
+        if textoCuadro != nil {
+            enviarTexto()
+        }
+        if trazoActivo {
+            enviarTrazo()
+        }
+    }
+
+    /// Con un STATUS, mantenimiento si han pasado al menos 1,5 s desde el
+    /// anterior (§10). Menos que los 2 s del temporizador, para que con la app
+    /// suspendida baste el STATUS periódico de la placa (cada 2 s).
+    private static let mantenimientoPorStatus: TimeInterval = 1.5
 
     // MARK: - Texto de navegación (NAV_TEXT, PROTOCOLO.md §7 bis)
 
@@ -465,7 +504,7 @@ final class EnlaceBLE: NSObject, ObservableObject {
     private var textoNavegacion: String?
     private var textoPrueba: String?
 
-    /// Texto de la navegación (lo pone ContentView): nil sin ruta.
+    /// Texto de la navegación (lo pone Navegacion): nil sin ruta.
     func ponerTextoNavegacion(_ texto: String?) {
         textoNavegacion = (texto?.isEmpty ?? true) ? nil : texto
         aplicarTexto()
@@ -501,6 +540,63 @@ final class EnlaceBLE: NSObject, ObservableObject {
         if !primerTextoAnotado {
             primerTextoAnotado = true
             anotar("NAV_TEXT enviado (seq \(mensaje.secuencia), \(bytes.count) bytes)")
+        }
+    }
+
+    // MARK: - Tramo de ruta (TRAZO, PROTOCOLO.md §7 ter)
+
+    private var puntosTrazo: [PuntoPlano] = []
+    private var giroTrazo: Int?
+
+    /// Si la placa conectada admite TRAZO: si no, no hace falta calcularlo.
+    var admiteTrazo: Bool {
+        estado == .conectado && caracTrazo != nil && info?.capacidades.contains(.trazo) == true
+    }
+
+    /// Cuántos puntos caben en un TRAZO con la conexión actual (como mucho, 44).
+    var puntosTrazoQueCaben: Int {
+        guard let periferico, estado == .conectado else { return MensajeTrazo.maximoPuntos }
+        return MensajeTrazo.puntosQueCaben(periferico.maximumWriteValueLength(for: .withoutResponse))
+    }
+
+    /// Tramo de ruta por delante (lo pone Navegacion en cada posición), en los
+    /// ejes de la moto; nil sin tramo. Se manda al cambiar, como mucho una vez
+    /// por segundo (lo que llegue entre medias sale con el siguiente o con el
+    /// mantenimiento); al dejar de haberlo, una vez sin tramo para borrarlo.
+    func ponerTrazo(_ tramo: (puntos: [PuntoPlano], giro: Int?)?) {
+        guard let tramo, tramo.puntos.count >= 2 else {
+            guard trazoActivo else { return }
+            trazoActivo = false
+            puntosTrazo = []
+            giroTrazo = nil
+            enviarTrazo()
+            return
+        }
+        let nuevo = !trazoActivo
+        puntosTrazo = tramo.puntos
+        giroTrazo = tramo.giro
+        if nuevo { trazoActivo = true }
+        if !nuevo, let ultimo = ultimoTrazo, Date().timeIntervalSince(ultimo) < 1 { return }
+        enviarTrazo()
+    }
+
+    private func enviarTrazo() {
+        guard admiteTrazo, let periferico, let caracTrazo else { return }
+        guard periferico.canSendWriteWithoutResponse else {
+            // Se manda en cuanto iOS avise de que hay hueco (peripheralIsReady)
+            trazoPendiente = true
+            return
+        }
+        trazoPendiente = false
+        let mensaje = MensajeTrazo(secuencia: secuenciaTrazo.siguiente(),
+                                   puntos: trazoActivo ? puntosTrazo : [], giro: giroTrazo)
+        let bytes = mensaje.codificar(maximo: periferico.maximumWriteValueLength(for: .withoutResponse))
+        periferico.writeValue(Data(bytes), for: caracTrazo, type: .withoutResponse)
+        ultimoTrazo = Date()
+        if !primerTrazoAnotado {
+            primerTrazoAnotado = true
+            // Sin los puntos: son la ruta que se sigue
+            anotar("TRAZO enviado (seq \(mensaje.secuencia), \(bytes.count) bytes)")
         }
     }
 
@@ -546,6 +642,9 @@ final class EnlaceBLE: NSObject, ObservableObject {
         }
         if textoPendiente {
             enviarTexto()
+        }
+        if trazoPendiente {
+            enviarTrazo()
         }
     }
 

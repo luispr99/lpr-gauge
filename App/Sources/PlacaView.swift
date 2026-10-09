@@ -1,9 +1,10 @@
 import SwiftUI
 import LPRCore
 
-// Prueba del enlace BLE con la placa (PROTOCOLO.md v0.3): estado de la
+// Prueba del enlace BLE con la placa (PROTOCOLO.md v0.4): estado de la
 // conexión, batería del iPhone que se envía en MOVIL, un texto de prueba para
-// la cara de navegación (NAV_TEXT) y eco de STATUS. (El registro para
+// la cara de navegación (NAV_TEXT), si se manda el tramo de ruta (TRAZO) y los
+// ecos de STATUS. (El registro para
 // depurar, que iba aquí hasta la 0.8.2, va al del sistema: EnlaceBLE.anotar)
 struct PlacaView: View {
     @ObservedObject var enlace: EnlaceBLE
@@ -79,6 +80,20 @@ struct PlacaView: View {
                     Text("Sale en la cara de navegación del cuadro. Con una ruta iniciada, la app manda la indicación en su lugar.")
                 }
 
+                Section {
+                    LabeledContent("Tramo de ruta") {
+                        if enlace.admiteTrazo {
+                            Text(enlace.trazoActivo ? "Enviándose" : "Sin tramo")
+                        } else {
+                            Text("La placa no lo admite")
+                        }
+                    }
+                    LabeledContent("Eco de la placa") { Text(texto(enlace.ecoTrazo)) }
+                } header: {
+                    Text("Recorrido en el cuadro")
+                } footer: {
+                    Text("Con una ruta iniciada, la app manda el tramo de ruta que queda por delante para dibujarlo en la cara de navegación.")
+                }
             }
             .navigationTitle("Placa")
             .safeAreaInset(edge: .bottom) {

@@ -176,9 +176,11 @@ final class Navegacion: ObservableObject {
     @Published private(set) var fueraDeRuta = false
     @Published private(set) var recalculando = false
     /// Texto para la cara de navegación del cuadro (NAV_TEXT): la distancia al
-    /// giro y, debajo, la instrucción; nil sin guiado. ContentView se lo pasa
-    /// al enlace con la placa
+    /// giro y, debajo, la instrucción; nil sin guiado.
     @Published private(set) var textoCuadro: String?
+    /// El enlace con el cuadro (lo pone ContentView). El texto y el trazo se le
+    /// pasan directamente desde aquí, también con la app en segundo plano
+    weak var enlace: EnlaceBLE?
 
     /// Para el mapa del guiado: la ruta, la posición (ajustada a la ruta si se va
     /// por ella), el rumbo y el punto del próximo giro.
@@ -463,6 +465,10 @@ final class Navegacion: ObservableObject {
         else { return }
         aviso = nil
         preparando = true
+        // Aquí, en primer plano (al pulsar «Iniciar»): Core Location no deja
+        // activar el segundo plano desde él. Si no llega a empezar, se quita
+        // (defer de iniciar(_:generacion:))
+        ubicacion.guiadoEnFondo(true)
         let esta = generacion
         tareaInicio = Task { [weak self] in
             await self?.iniciar(variante, generacion: esta)
@@ -474,12 +480,17 @@ final class Navegacion: ObservableObject {
     /// ruta o el servidor devuelve otras rutas, no empieza: vuelve a calcular
     /// las propuestas y avisa.
     private func iniciar(_ variante: VarianteRuta, generacion esta: Int) async {
-        guard generacion == esta else { return }
         defer {
             if generacion == esta {
                 preparando = false
             }
+            // Sin guiar y sin otro «Iniciar» en marcha (si se canceló y se volvió
+            // a pulsar, preparando es del nuevo, que necesita el segundo plano)
+            if !navegando && !preparando {
+                ubicacion.guiadoEnFondo(false)
+            }
         }
+        guard generacion == esta else { return }
         let candidata = variante.candidata
         let simular = self.simular
         // Las rutas se piden desde la posición del momento de proponerlas. Si
@@ -603,12 +614,15 @@ final class Navegacion: ObservableObject {
         geometriaGuiado = []
         geometriaRuta = []
         textoCuadro = nil
+        enlace?.ponerTextoNavegacion(nil)
+        enlace?.ponerTrazo(nil)
         posicionEnRuta = nil
         rumbo = nil
         puntoGiro = nil
         cancelarRuta()
         // stopNavigation() también para la ubicación: se reanuda para la posición
-        // y la altitud
+        // y la altitud, ya sin el segundo plano
+        ubicacion.guiadoEnFondo(false)
         ubicacion.startUpdating()
     }
 
@@ -690,6 +704,10 @@ final class Navegacion: ObservableObject {
         let texto: String?
         if llegada {
             texto = "Has llegado"
+        } else if recalculando {
+            texto = "Recalculando la ruta…"
+        } else if fueraDeRuta {
+            texto = "Fuera de ruta"
         } else if let maniobra {
             texto = [metrosAlGiro.map { Flechas.distancia($0) }, maniobra.texto]
                 .compactMap { $0 }
@@ -697,9 +715,51 @@ final class Navegacion: ObservableObject {
         } else {
             texto = nil
         }
+        // Al cuadro directamente, no a través de la vista: con la app en segundo
+        // plano SwiftUI puede no evaluar las vistas
         if texto != textoCuadro {
             textoCuadro = texto
+            enlace?.ponerTextoNavegacion(texto)
         }
+        if let enlace {
+            enlace.ponerTrazo(enlace.admiteTrazo
+                ? trazoParaCuadro(estado, maximoPuntos: enlace.puntosTrazoQueCaben)
+                : nil)
+        }
+    }
+
+    /// Metros de ruta por delante que se mandan al cuadro: hasta 150 m después
+    /// del próximo giro, entre 250 y 1000 (supuesto, a ajustar en la moto). Así,
+    /// al acercarse al giro el cuadro se acerca, porque ajusta la escala al
+    /// tramo.
+    private static func metrosTrazo(alGiro metros: Double) -> Double {
+        min(1_000, max(250, metros + 150))
+    }
+
+    /// El tramo de ruta por delante para el cuadro (TRAZO), en los ejes de la
+    /// moto. Nil fuera de ruta, recalculando o al llegar: el cuadro deja de
+    /// dibujarlo.
+    private func trazoParaCuadro(_ estado: NavigationState, maximoPuntos: Int) -> (puntos: [PuntoPlano], giro: Int?)? {
+        guard maximoPuntos >= 2, !llegada, !estado.isCalculatingNewRoute,
+              case let .navigating(currentStepGeometryIndex: indice, userLocation: _, snappedUserLocation: ajustada,
+                                   remainingSteps: pasos, remainingWaypoints: _, progress: progreso, summary: _,
+                                   deviation: desvio, visualInstruction: _, spokenInstruction: _,
+                                   annotationJson: _) = estado.tripState,
+              desvio == .noDeviation
+        else { return nil }
+        let metros = Self.metrosTrazo(alGiro: progreso.distanceToNextManeuver)
+        // Solo los pasos que hacen falta (su distancia entera es un máximo de lo
+        // que queda en el primero)
+        var geometrias: [[PuntoRuta]] = []
+        var suma = 0.0
+        for paso in pasos {
+            geometrias.append(paso.geometry.map { PuntoRuta(latitud: $0.lat, longitud: $0.lng) })
+            suma += paso.distance
+            if suma > metros + 200 { break }
+        }
+        let origen = PuntoRuta(latitud: ajustada.coordinates.lat, longitud: ajustada.coordinates.lng)
+        return Trazo.tramo(pasos: geometrias, indice: indice.map { Int($0) }, desde: origen,
+                           metros: metros, giro: geometrias.first?.last, maximoPuntos: maximoPuntos)
     }
 
     private func posicionNueva(_ posicion: CLLocation) {
