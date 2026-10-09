@@ -92,6 +92,7 @@ struct VarianteRuta: Identifiable {
     var segundos: Double { candidata.ruta.segundos }
     var curvas: Int { candidata.sinuosidad.curvas }
     var metrosPeaje: Double { candidata.ruta.metrosPeaje }
+    var metrosAutopista: Double { candidata.ruta.metrosAutopista }
     var metrosSinAsfaltar: Double { candidata.ruta.metrosSinAsfaltar }
     var geometria: [CLLocationCoordinate2D] { candidata.geometria }
     var trazo: TrazoMapa { candidata.trazo }

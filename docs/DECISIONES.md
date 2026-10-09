@@ -265,6 +265,12 @@ final.
     movido.
 - **Decisión de la app** (no estaba en la maqueta): la simulación del recorrido
   pasa a Ajustes (rueda dentada), porque no cabe en el panel.
+- **0.7.3, a petición del autor:** cada ruta indica también si lleva autopista,
+  con los km («Autopista 52 km»), junto a «Peaje» y «Sin asfaltar». Sale del
+  campo `highway` de cada maniobra del formato propio de Valhalla, que marca las
+  vías de clase autopista de OSM (`motorway`; en España, autopistas y
+  autovías), sin contar los enlaces [F37]. Como los demás, los km son un
+  máximo por maniobra.
 
 ### 2026-10-09 · Navegación: servidores, buscador y Ferrostar
 

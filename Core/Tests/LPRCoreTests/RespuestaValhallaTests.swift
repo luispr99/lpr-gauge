@@ -45,7 +45,7 @@ final class RespuestaValhallaTests: XCTestCase {
             maniobras: [
                 maniobra(1, km: 0.2, 0, 2, extra: ["rough": true]),
                 maniobra(26, km: 0.1, 2, 3, extra: ["roundabout_exit_count": 2]),
-                maniobra(27, km: 0.2, 3, 5, extra: ["toll": true]),
+                maniobra(27, km: 0.2, 3, 5, extra: ["toll": true, "highway": true]),
                 maniobra(4, km: 0, 5, 5),
             ],
             km: 0.5,
@@ -83,7 +83,9 @@ final class RespuestaValhallaTests: XCTestCase {
         XCTAssertEqual(rutas[0].metrosSinAsfaltar, 200, accuracy: 0.001)
         // Empieza en tierra: no cuenta como tierra en medio
         XCTAssertFalse(rutas[0].tierraEnMedio)
+        XCTAssertEqual(rutas[0].metrosAutopista, 200, accuracy: 0.001)
         XCTAssertEqual(rutas[1].metrosPeaje, 0)
+        XCTAssertEqual(rutas[1].metrosAutopista, 0)
         XCTAssertEqual(rutas[1].metrosSinAsfaltar, 100, accuracy: 0.001)
         XCTAssertTrue(rutas[1].tierraEnMedio)
     }

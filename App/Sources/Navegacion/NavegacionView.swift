@@ -439,15 +439,18 @@ struct NavegacionView: View {
         return partes.joined(separator: " · ")
     }
 
-    /// Peaje y tierra de la ruta, si los lleva. Los km son un máximo: Valhalla
-    /// marca la maniobra entera.
+    /// Peaje, autopista y tierra de la ruta, si los lleva. Los km son un
+    /// máximo: Valhalla marca la maniobra entera.
     private func avisos(_ variante: VarianteRuta) -> String? {
         var partes: [String] = []
         if variante.metrosPeaje > 0 {
-            partes.append("Peaje, hasta \(Flechas.distancia(variante.metrosPeaje))")
+            partes.append("Peaje \(Flechas.distancia(variante.metrosPeaje))")
+        }
+        if variante.metrosAutopista > 0 {
+            partes.append("Autopista \(Flechas.distancia(variante.metrosAutopista))")
         }
         if variante.metrosSinAsfaltar > 0 {
-            partes.append("Sin asfaltar, hasta \(Flechas.distancia(variante.metrosSinAsfaltar))")
+            partes.append("Sin asfaltar \(Flechas.distancia(variante.metrosSinAsfaltar))")
         }
         return partes.isEmpty ? nil : partes.joined(separator: " · ")
     }

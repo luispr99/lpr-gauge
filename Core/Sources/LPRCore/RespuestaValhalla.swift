@@ -23,6 +23,9 @@ public struct RutaValhalla: Equatable {
     /// Metros de las maniobras con tierra en medio (un máximo). Si un tramo va
     /// entero sin asfaltar, cuenta entero.
     public var metrosSinAsfaltarEnMedio: Double
+    /// Metros de las maniobras con algún tramo de autopista o autovía (clase
+    /// `motorway` de OSM, sin los enlaces). También un máximo.
+    public var metrosAutopista: Double
 
     public init(
         metros: Double,
@@ -32,7 +35,8 @@ public struct RutaValhalla: Equatable {
         metrosPeaje: Double,
         metrosSinAsfaltar: Double,
         tierraEnMedio: Bool,
-        metrosSinAsfaltarEnMedio: Double
+        metrosSinAsfaltarEnMedio: Double,
+        metrosAutopista: Double = 0
     ) {
         self.metros = metros
         self.segundos = segundos
@@ -42,6 +46,7 @@ public struct RutaValhalla: Equatable {
         self.metrosSinAsfaltar = metrosSinAsfaltar
         self.tierraEnMedio = tierraEnMedio
         self.metrosSinAsfaltarEnMedio = metrosSinAsfaltarEnMedio
+        self.metrosAutopista = metrosAutopista
     }
 }
 
@@ -75,6 +80,7 @@ public enum RespuestaValhalla {
         var puntos: [PuntoRuta] = []
         var tramos: [[PuntoRuta]] = []
         var metrosPeaje = 0.0
+        var metrosAutopista = 0.0
         var metrosSinAsfaltar = 0.0
         var tierraEnMedio = false
         var metrosSinAsfaltarEnMedio = 0.0
@@ -112,6 +118,9 @@ public enum RespuestaValhalla {
                 if maniobra.toll == true {
                     metrosPeaje += metros
                 }
+                if maniobra.highway == true {
+                    metrosAutopista += metros
+                }
                 if maniobra.rough == true {
                     metrosSinAsfaltar += metros
                 }
@@ -134,7 +143,8 @@ public enum RespuestaValhalla {
             metrosPeaje: metrosPeaje,
             metrosSinAsfaltar: metrosSinAsfaltar,
             tierraEnMedio: tierraEnMedio,
-            metrosSinAsfaltarEnMedio: metrosSinAsfaltarEnMedio
+            metrosSinAsfaltarEnMedio: metrosSinAsfaltarEnMedio,
+            metrosAutopista: metrosAutopista
         )
     }
 
@@ -169,6 +179,7 @@ public enum RespuestaValhalla {
         let beginShapeIndex: Int
         let endShapeIndex: Int
         let toll: Bool?
+        let highway: Bool?
         let rough: Bool?
         let roundaboutExitCount: Int?
     }
