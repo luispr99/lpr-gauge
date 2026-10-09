@@ -379,16 +379,23 @@ struct NavegacionView: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
-                    if let avisos = avisos(variante) {
-                        Label {
-                            Text(verbatim: avisos)
-                        } icon: {
-                            Image(systemName: "exclamationmark.triangle.fill")
+                    let lista = avisos(variante)
+                    if !lista.isEmpty {
+                        HStack(spacing: 8) {
+                            ForEach(lista, id: \.self) { aviso in
+                                // La autopista solo informa (a petición del autor);
+                                // el peaje y la tierra, advierten
+                                Label {
+                                    Text(verbatim: aviso.texto)
+                                } icon: {
+                                    Image(systemName: aviso.advierte ? "exclamationmark.triangle.fill" : "info.circle.fill")
+                                }
+                                .foregroundStyle(aviso.advierte ? Color.orange : Color.blue)
+                            }
                         }
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(.orange)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+                        .minimumScaleFactor(0.75)
                     }
                 }
                 Spacer(minLength: 0)
@@ -430,20 +437,21 @@ struct NavegacionView: View {
         return partes.joined(separator: " · ")
     }
 
-    /// Peaje, autopista y tierra de la ruta, si los lleva. Los km son un
-    /// máximo: Valhalla marca la maniobra entera.
-    private func avisos(_ variante: VarianteRuta) -> String? {
-        var partes: [String] = []
+    /// Peaje, autopista y tierra de la ruta, si los lleva; `advierte` es false
+    /// para lo que solo informa (la autopista). Los km son un máximo: Valhalla
+    /// marca la maniobra entera.
+    private func avisos(_ variante: VarianteRuta) -> [AvisoRuta] {
+        var avisos: [AvisoRuta] = []
         if variante.metrosPeaje > 0 {
-            partes.append("Peaje \(Flechas.distancia(variante.metrosPeaje))")
+            avisos.append(AvisoRuta(texto: "Peaje \(Flechas.distancia(variante.metrosPeaje))", advierte: true))
         }
         if variante.metrosAutopista > 0 {
-            partes.append("Autopista \(Flechas.distancia(variante.metrosAutopista))")
+            avisos.append(AvisoRuta(texto: "Autopista \(Flechas.distancia(variante.metrosAutopista))", advierte: false))
         }
         if variante.metrosSinAsfaltar > 0 {
-            partes.append("Sin asfaltar \(Flechas.distancia(variante.metrosSinAsfaltar))")
+            avisos.append(AvisoRuta(texto: "Sin asfaltar \(Flechas.distancia(variante.metrosSinAsfaltar))", advierte: true))
         }
-        return partes.isEmpty ? nil : partes.joined(separator: " · ")
+        return avisos
     }
 
     /// Cancelar (una X roja) e iniciar (grande, en verde).
@@ -670,6 +678,13 @@ struct NavegacionView: View {
             .lineLimit(1)
             .minimumScaleFactor(0.8)
     }
+}
+
+/// Aviso de una ruta en su tarjeta (peaje, autopista, tierra).
+private struct AvisoRuta: Hashable {
+    let texto: String
+    /// true: advierte (triángulo naranja); false: solo informa (círculo azul)
+    let advierte: Bool
 }
 
 /// Icono de SF Symbols con una diagonal encima cuando `tachado` (Apple no trae

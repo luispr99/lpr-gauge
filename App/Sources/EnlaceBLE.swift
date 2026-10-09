@@ -1,5 +1,6 @@
 import CoreBluetooth
 import Foundation
+import os
 import UIKit
 import LPRCore
 
@@ -46,8 +47,6 @@ final class EnlaceBLE: NSObject, ObservableObject {
     /// texto, y el último eco de la placa.
     @Published private(set) var textoCuadro: String?
     @Published private(set) var ecoTexto: UInt8?
-    /// Registro en memoria para depurar sin Xcode (no sale del iPhone).
-    @Published private(set) var registro: [String] = []
 
     private var central: CBCentralManager?
     private var periferico: CBPeripheral?
@@ -83,12 +82,6 @@ final class EnlaceBLE: NSObject, ObservableObject {
     private let uuidStatus = CBUUID(string: Protocolo.UUIDs.status)
     private let uuidMovil = CBUUID(string: Protocolo.UUIDs.movil)
     private let uuidTexto = CBUUID(string: Protocolo.UUIDs.navText)
-
-    private static let formatoHora: DateFormatter = {
-        let formato = DateFormatter()
-        formato.dateFormat = "HH:mm:ss"
-        return formato
-    }()
 
     override init() {
         super.init()
@@ -566,11 +559,13 @@ final class EnlaceBLE: NSObject, ObservableObject {
         return ns.code == 14 && (ns.domain == CBErrorDomain || ns.domain == CBATTErrorDomain)
     }
 
+    /// Mensajes para depurar, al registro del sistema (se ven con la app Consola
+    /// del Mac). Hasta la 0.8.2 iban a una lista de la pestaña Placa, que el
+    /// autor pidió quitar. No llevan datos personales (ni textos ni posiciones)
+    private static let registro = Logger(subsystem: "io.github.luispr99.lprgauge", category: "BLE")
+
     private func anotar(_ texto: String) {
-        registro.append("\(Self.formatoHora.string(from: Date()))  \(texto)")
-        if registro.count > 100 {
-            registro.removeFirst(registro.count - 100)
-        }
+        Self.registro.info("\(texto, privacy: .public)")
     }
 
     private func hex(_ bytes: [UInt8]) -> String {

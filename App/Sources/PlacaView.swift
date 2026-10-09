@@ -3,8 +3,8 @@ import LPRCore
 
 // Prueba del enlace BLE con la placa (PROTOCOLO.md v0.3): estado de la
 // conexión, batería del iPhone que se envía en MOVIL, un texto de prueba para
-// la cara de navegación (NAV_TEXT), eco de STATUS y el registro para depurar
-// sin Xcode.
+// la cara de navegación (NAV_TEXT) y eco de STATUS. (El registro para
+// depurar, que iba aquí hasta la 0.8.2, va al del sistema: EnlaceBLE.anotar)
 struct PlacaView: View {
     @ObservedObject var enlace: EnlaceBLE
     @State private var textoPrueba = ""
@@ -79,12 +79,6 @@ struct PlacaView: View {
                     Text("Sale en la cara de navegación del cuadro. Con una ruta iniciada, la app manda la indicación en su lugar.")
                 }
 
-                Section("Registro") {
-                    ForEach(enlace.registro.indices.reversed(), id: \.self) { indice in
-                        Text(verbatim: enlace.registro[indice])
-                            .font(.caption.monospaced())
-                    }
-                }
             }
             .navigationTitle("Placa")
             .safeAreaInset(edge: .bottom) {

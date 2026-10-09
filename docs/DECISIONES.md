@@ -280,6 +280,12 @@ final.
     50/3,6 m: el simulador de Ferrostar 0.57.0 avanza un paso cada 1 s
     dividido por el factor (`Location.swift`);
   - el cartel del guiado, con fondo negro (antes azul).
+- **0.8.3, a petición del autor:**
+  - la autopista se indica con un icono de información (azul); el peaje y la
+    tierra siguen con el de advertencia (naranja);
+  - se quita el registro de la pestaña Placa; los mensajes de depuración van al
+    registro del sistema (`Logger`, se ven con la app Consola del Mac), sin
+    datos personales.
 
 ### 2026-10-09 · Primeros datos en el cuadro: texto de navegación y carga (0.8.0)
 
