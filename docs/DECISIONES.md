@@ -129,6 +129,114 @@ final.
 - **Al recalcular por desvío** se usan las opciones de la petición de la que salió
   la ruta elegida, sin alternativas. La ruta nueva puede no ser la misma
   alternativa.
+- **Corregido el mismo día** (ver la decisión siguiente, con el código de
+  Valhalla [F37]):
+  - En moto, Valhalla ignora `exclude_unpaved`: solo lo aplican los perfiles de
+    coche, taxi, autobús y camión.
+  - `use_trails` solo cambia la penalización de los firmes sin asfaltar; no lleva
+    a carreteras secundarias, aunque la documentación lo diga.
+  - Por tanto, «Solo asfalto» en la 0.6.0 equivalía casi a no marcarlo
+    (`use_trails = 0` es el valor por defecto), y la petición «secundarias» con
+    `use_trails = 0,5` quitaba la penalización a la tierra.
+
+### 2026-10-09 · Rutas 0.7.0: firme y peajes de cada ruta, «Por tierra» y margen ajustable
+
+- **Petición del autor:**
+  - botones más grandes con iconos;
+  - «Solo asfalto» siempre marcado, con icono de carretera;
+  - indicar en cada ruta si lleva peaje o tierra;
+  - una barra para el % de tiempo extra;
+  - tarjetas de ruta más grandes;
+  - corregir la raya, que en carreteras con muchas curvas se ve fuera de la
+    carretera.
+- **Respuestas del autor (2026-10-09):**
+  - «Solo asfalto» va marcado cada vez que se abre la app y se puede desmarcar
+    para un viaje (no se guarda).
+  - Sin «Solo asfalto» se añade una tercera ruta, «Por tierra».
+  - La barra va de 0 a 200 %, con un 25 % por defecto; el valor elegido se
+    guarda. Valor anterior: 25 % fijo.
+- **Apple Maps no sabe del firme.**
+  - MapKit no tiene ningún dato de firme ni opción para evitar tierra. De la ruta
+    entera solo da `hasTolls` y `hasHighways` (iOS 16), y para la petición
+    `tollPreference` y `highwayPreference` [F35].
+  - La app Mapas, según la guía del iPhone, solo permite evitar peajes y
+    autopistas en coche [F36].
+- **Lo que hace Valhalla** (código de la 3.9.1 y del commit c803bdc, el que dice
+  ejecutar el servidor de FOSSGIS el 2026-10-09 [F37]):
+  - El formato OSRM (el que usa Ferrostar) marca el peaje de cada paso, pero no
+    trae nada del firme.
+  - El formato propio de Valhalla (`"format": "json"`) marca en cada maniobra el
+    peaje (`toll`) y si alguna parte va sin asfaltar (`rough`). Sin asfaltar es
+    compactado, tierra, grava o senda. Un camino sin etiqueta de firme en OSM
+    cuenta como asfaltado, salvo las pistas (`highway=track`), que cuentan como
+    tierra.
+  - En moto no hay forma de prohibir la tierra; solo de penalizarla.
+    - `use_trails = 0` multiplica el coste de la tierra, aproximadamente: compactado ×1,8,
+      tierra ×2,6, grava ×5 y senda ×9.
+    - `use_tracks = 0` cuadruplica el coste de las pistas y añade 300 s al
+      entrar en una.
+    - `use_trails = 1` da una ligera ventaja a la tierra.
+- **Decisión:**
+  - Las rutas propuestas se piden en el formato propio de Valhalla.
+  - Al pulsar «Iniciar» se repite la misma petición en formato OSRM para
+    Ferrostar. El cuerpo lo genera Ferrostar en las dos, con el mismo origen;
+    solo cambia el formato.
+  - De la respuesta OSRM se toma la ruta de la misma posición, comprobando que
+    coincidan la distancia y el tiempo (±0,2 % o 5 m/5 s). Si ninguna coincide
+    (el servidor ha cargado datos nuevos o ha devuelto menos alternativas), no
+    se empieza: se vuelven a calcular las propuestas y se avisa.
+  - Tampoco se empieza si, con buena precisión del GPS (≤25 m), la posición
+    está a más de 100 m de la ruta. Las rutas salen de la posición del momento
+    de proponerlas, y Ferrostar marca desvío a partir de 50 m. Se vuelven a
+    calcular y se avisa.
+  - Comprobado el 2026-10-09 con puntos públicos (Madrid–Segovia): las dos
+    respuestas dan las mismas tres rutas, en el mismo orden y con la misma
+    distancia y tiempo, y una maniobra por paso.
+  - Se descarta pedir el firme con `/trace_attributes`: costaría una petición
+    más por ruta candidata.
+  - Al recalcular por desvío, Ferrostar se queda con la primera ruta de la
+    petición: si la elegida era una alternativa, puede cambiar.
+- **Peticiones,** separadas 1,1 s, cada una con `alternates = 2`:
+  - normal y secundarias (`use_highways = 0`); con «Evitar autopistas» son la
+    misma y solo se pide una;
+  - sin «Solo asfalto», además una de tierra: `use_highways = 0`,
+    `use_trails = 1` y `use_tracks = 1`.
+  - «Solo asfalto» pone `use_trails = 0` y `use_tracks = 0` en todas.
+  - Al empezar se hace una petición más (la de formato OSRM).
+- **Tierra en medio** (LPRCore, `RespuestaValhalla.swift`): la de las maniobras
+  entre la primera y la última asfaltada. La tierra seguida desde la salida o
+  hasta la llegada no cuenta, como en `exclude_unpaved`. Es una aproximación por
+  maniobra: si la tierra va dentro de una maniobra de salida o de llegada larga,
+  no se ve.
+- **Elección** (LPRCore, `Eleccion.swift`):
+  - La más rápida y la más divertida se eligen entre las rutas sin tierra en
+    medio. Si todas la llevan, se elige entre todas y se avisa.
+  - «Por tierra» es la de más metros de tierra en medio entre las que caben en
+    el margen; la de salida y llegada no cuenta. Exige al menos 500 m, un
+    supuesto pendiente de ajustar.
+  - Una ruta con varios papeles sale una sola vez, con los nombres juntos.
+  - La barra no pide rutas nuevas: vuelve a elegir entre las candidatas.
+- **Avisos en cada ruta:** «Peaje» y «Sin asfaltar», con los km. Son un máximo,
+  porque Valhalla marca la maniobra entera.
+- **La raya del mapa:**
+  - Va con uniones redondeadas. En SwiftUI, `StrokeStyle` usa por defecto
+    uniones en pico con límite 10 [F38]: con 8 pt de ancho, en una curva cerrada
+    el pico puede salir unos 40 pt.
+  - En el mapa de búsqueda, además, se simplifica con Douglas-Peucker según el
+    zoom, con una tolerancia de 2 puntos de pantalla (supuesto). Al alejarse va
+    más recta y al acercarse sigue la carretera. La escala sale de la región
+    visible, que es exacta con el mapa sin girar ni inclinar.
+  - En el guiado no se simplifica: la cámara está siempre cerca (250–1500 m),
+    donde tiene que seguir la carretera.
+  - Las dos causas, los picos y el mapa base generalizado al alejarse, son
+    hipótesis sin comprobar en el iPhone.
+- **Iconos** (SF Symbols disponibles en iOS 17, según SFSafeSymbols 7.0.0 [F39],
+  que es de terceros):
+  - opciones: `eurosign.circle.fill` (peaje), `car.rear.road.lane` (autopista) y
+    `road.lanes` (asfalto);
+  - rutas: `hare.fill` (rápida), `road.lanes.curved.right` (divertida) y
+    `mountain.2.fill` (tierra).
+  - No hay ningún símbolo de tierra ni de grava.
 
 ### 2026-10-09 · Navegación: servidores, buscador y Ferrostar
 
@@ -383,6 +491,12 @@ Ferrostar:
   iOS no la vuelve a lanzar [F13]: en las pruebas no hay que cerrarla así.
 - Coexistencia de BLE, WiFi (OBD) y pantalla en la placa del cuadro, con el
   Bluetooth de la app en marcha. Se mide en el proyecto del cuadro.
+- Rutas 0.7.0:
+  - que al pulsar «Iniciar» la ruta OSRM coincida con la propuesta;
+  - que la raya ya no se salga de la carretera;
+  - los umbrales de curvas y de tierra (500 m) con rutas conocidas;
+  - por qué a veces Valhalla devuelve menos alternativas de las pedidas
+    (`alternates` es «como mucho»).
 
 ## Fuentes (consultadas el 2026-10-08)
 
@@ -470,3 +584,23 @@ Ferrostar:
   Valhalla (consultadas el 2026-10-09):
   https://github.com/stadiamaps/ferrostar/blob/0.57.0/common/ferrostar/src/routing_adapters/osrm/mod.rs ·
   https://github.com/stadiamaps/ferrostar/blob/0.57.0/common/ferrostar/src/routing_adapters/valhalla.rs
+- [F35] Apple, MapKit (consultado el 2026-10-09):
+  https://developer.apple.com/documentation/mapkit/mkroute ·
+  https://developer.apple.com/documentation/mapkit/mkroute/hastolls ·
+  https://developer.apple.com/documentation/mapkit/mkdirections/request/tollpreference
+- [F36] Apple, guía del iPhone, indicaciones en coche (iOS 27, consultada el
+  2026-10-09):
+  https://support.apple.com/guide/iphone/get-driving-directions-ipha84a94043/ios
+- [F37] Valhalla, código fuente (tag 3.9.1, commit bafb699, y master c803bdc;
+  consultado el 2026-10-09): src/sif/motorcyclecost.cc, src/sif/autocost.cc,
+  src/tyr/route_serializer_osrm.cc, src/tyr/route_serializer_valhalla.cc,
+  src/odin/maneuversbuilder.cc, valhalla/baldr/directededge.h,
+  src/mjolnir/pbfgraphparser.cc ·
+  https://github.com/valhalla/valhalla/tree/bafb69902220615a48307d5c790fb6c943802ba4 ·
+  versión del servidor: https://valhalla1.openstreetmap.de/status
+- [F38] Apple, trazos (consultado el 2026-10-09):
+  https://developer.apple.com/documentation/swiftui/strokestyle ·
+  https://developer.apple.com/documentation/mapkit/mkoverlaypathrenderer/linejoin ·
+  https://developer.apple.com/documentation/mapkit/mapcontent/stroke(_:style:)
+- [F39] SFSafeSymbols 7.0.0 (disponibilidad de SF Symbols, de terceros;
+  consultado el 2026-10-09): https://github.com/SFSafeSymbols/SFSafeSymbols
