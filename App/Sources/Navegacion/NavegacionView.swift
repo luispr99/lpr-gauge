@@ -15,7 +15,8 @@ struct NavegacionView: View {
     /// Simplificación de las rayas para el zoom actual (TrazoMapa).
     @State private var nivelTrazo: Int?
     /// Con un destino, las opciones ocupan el sitio de las rutas.
-    @State private var mostrarOpciones = false
+    /// La barra del tiempo extra, desplegada con su botón (0.9.4)
+    @State private var mostrarMargen = false
     @FocusState private var escribiendo: Bool
 
     /// Parte de la pantalla para el mapa; el resto, para el panel.
@@ -82,14 +83,14 @@ struct NavegacionView: View {
         .onChange(of: navegacion.consulta) { _, _ in
             navegacion.consultaCambiada()
         }
-        // Al terminar un cálculo, la ruta elegida entera. Las opciones siguen
-        // abiertas si lo estaban, por si se cambia algo más
+        // Al terminar un cálculo, la ruta elegida entera. La barra del tiempo
+        // extra sigue abierta si lo estaba, por si se cambia algo más
         .onChange(of: navegacion.calculos) { _, _ in
             encuadrarElegida()
         }
         .onChange(of: navegacion.destino == nil) { _, sinDestino in
             if sinDestino {
-                mostrarOpciones = false
+                mostrarMargen = false
             }
         }
     }
@@ -184,21 +185,25 @@ struct NavegacionView: View {
 
     // MARK: - Panel de abajo
 
-    /// Sin destino, solo las opciones de ruta, ocupando todo el panel. Con
-    /// destino, la fila «Opciones de ruta», las rutas (o las opciones, si se
-    /// abren, en el mismo sitio) y los botones de cancelar e iniciar.
+    /// Arriba, los botones de peajes, autovías y tiempo extra, en una línea. Sin
+    /// destino, solo eso (y la barra del tiempo, si se abre). Con destino,
+    /// debajo, las rutas (o la barra del tiempo extra, si se abre, en su sitio)
+    /// y los botones de cancelar e iniciar. Diseño aprobado por el autor el
+    /// 2026-10-09 con vistas previas (0.9.4).
     private var panelInferior: some View {
         VStack(spacing: 8) {
-            if navegacion.destino == nil {
-                opcionesRuta
-            } else {
-                filaOpciones
-                if mostrarOpciones {
-                    opcionesRuta
-                } else {
+            filaOpciones
+            if mostrarMargen {
+                barraMargen
+                    .transition(.opacity)
+            }
+            if navegacion.destino != nil {
+                if !mostrarMargen {
                     rutasPropuestas
                 }
                 botonesRuta
+            } else {
+                Spacer(minLength: 0)
             }
             atribucion
         }
@@ -209,101 +214,75 @@ struct NavegacionView: View {
         .background(.regularMaterial)
     }
 
-    /// Botón que abre y cierra las opciones (a petición del autor): con el
-    /// primer toque se queda pulsado, en un tono más oscuro, y las opciones
-    /// ocupan el sitio de las rutas; con el segundo se cierran. Resume las
-    /// opciones activas y el margen.
+    /// Los tres botones en cápsula, en la misma línea aunque haya que bajar la
+    /// letra (a petición del autor): evitar peajes y evitar autovías se activan
+    /// y desactivan; el del tiempo extra abre y cierra su barra. Activado o
+    /// abierto, relleno del color de la app con el texto en blanco (y el icono
+    /// tachado en los de evitar). Al cambiar algo con un destino elegido se
+    /// vuelven a calcular las rutas.
     private var filaOpciones: some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                mostrarOpciones.toggle()
+        HStack(spacing: 6) {
+            botonCapsula(activo: navegacion.evitarPeajes) {
+                navegacion.evitarPeajes.toggle()
+            } label: {
+                IconoTachable(nombre: "eurosign.circle", tachado: navegacion.evitarPeajes)
+                Text("Evitar peajes")
             }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "slider.horizontal.3")
-                Text("Opciones de ruta")
-                    .fontWeight(.semibold)
-                if navegacion.evitarPeajes {
-                    IconoTachable(nombre: "eurosign.circle", tachado: true)
+            botonCapsula(activo: navegacion.evitarAutopistas) {
+                navegacion.evitarAutopistas.toggle()
+            } label: {
+                IconoTachable(nombre: "road.lanes", tachado: navegacion.evitarAutopistas)
+                Text("Evitar autovías")
+            }
+            botonCapsula(activo: mostrarMargen, ancho: false) {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    mostrarMargen.toggle()
                 }
-                if navegacion.evitarAutopistas {
-                    IconoTachable(nombre: "road.lanes", tachado: true)
-                }
-                Spacer()
+            } label: {
+                Image(systemName: "clock")
                 Text(verbatim: textoMargen)
                     .monospacedDigit()
-                Image(systemName: mostrarOpciones ? "chevron.up" : "chevron.down")
             }
-            .font(.subheadline)
-            .foregroundStyle(mostrarOpciones ? Color.white : Color.primary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(
-                mostrarOpciones ? Color.accentColor.opacity(0.85) : Color.secondary.opacity(0.15),
-                in: RoundedRectangle(cornerRadius: 10)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 10))
+            .accessibilityLabel(Text("Tiempo extra alternativas: \(textoMargen)"))
         }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(mostrarOpciones ? .isSelected : [])
         .disabled(navegacion.preparando)
     }
 
-    /// Botones de peajes y autovías y la barra de tiempo extra, ocupando todo el
-    /// sitio que haya. Al cambiar algo con un destino elegido se vuelven a
-    /// calcular las rutas.
-    private var opcionesRuta: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 10) {
-                botonOpcion("Evitar peajes", icono: "eurosign.circle", activa: $navegacion.evitarPeajes)
-                botonOpcion("Evitar autovías", icono: "road.lanes", activa: $navegacion.evitarAutopistas)
+    /// Botón en cápsula: sin activar, con el borde del color de la app; activado,
+    /// relleno de ese color y con el texto en blanco. `ancho`: se reparte el
+    /// sitio que sobra (los de evitar); si no, mide lo que su contenido.
+    private func botonCapsula<Contenido: View>(
+        activo: Bool,
+        ancho: Bool = true,
+        accion: @escaping () -> Void,
+        @ViewBuilder label: () -> Contenido
+    ) -> some View {
+        Button(action: accion) {
+            HStack(spacing: 4) {
+                label()
             }
-            .frame(maxHeight: .infinity)
-            barraMargen
-        }
-        .frame(maxHeight: .infinity)
-    }
-
-    /// Activada: el icono se tacha y el botón pasa a un tono claro del color de
-    /// la app.
-    private func botonOpcion(_ titulo: LocalizedStringKey, icono: String, activa: Binding<Bool>) -> some View {
-        let marcada = activa.wrappedValue
-        return Button {
-            activa.wrappedValue.toggle()
-        } label: {
-            VStack(spacing: 8) {
-                IconoTachable(nombre: icono, tachado: marcada)
-                    .font(.system(size: 36))
-                Text(titulo)
-                    .font(.subheadline.weight(.semibold))
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.85)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(8)
-            .foregroundStyle(marcada ? Color.accentColor : Color.primary)
-            .background(
-                marcada ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.12),
-                in: RoundedRectangle(cornerRadius: 14)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 14)
-                    .strokeBorder(marcada ? Color.accentColor : Color.clear, lineWidth: 1.5)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 14))
+            .font(.footnote.weight(.semibold))
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .padding(.horizontal, 9)
+            .frame(maxWidth: ancho ? .infinity : nil, minHeight: 36)
+            .foregroundStyle(activo ? Color.white : Color.accentColor)
+            .background(activo ? Color.accentColor.opacity(0.85) : Color.clear, in: Capsule())
+            .overlay(Capsule().strokeBorder(Color.accentColor.opacity(activo ? 0.85 : 1), lineWidth: 1.5))
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .accessibilityAddTraits(marcada ? .isSelected : [])
-        .disabled(navegacion.preparando)
+        .fixedSize(horizontal: !ancho, vertical: false)
+        .accessibilityAddTraits(activo ? .isSelected : [])
     }
 
-    /// Barra del tiempo extra admitido para la ruta con más curvas, de 0 a 200 %.
-    /// Más corta que el panel, con − y + de 25 en 25 % a los lados.
+    /// Barra del tiempo extra admitido para las alternativas, de 0 a 200 %, con
+    /// − y + de 25 en 25 % a los lados. La despliega el botón del reloj; con
+    /// destino, en el sitio de las rutas.
     private var barraMargen: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 8) {
             HStack {
-                Label("Tiempo extra alternativas", systemImage: "clock")
+                Text("Tiempo extra alternativas")
                 Spacer()
                 Text(verbatim: textoMargen)
                     .fontWeight(.semibold)
@@ -316,6 +295,9 @@ struct NavegacionView: View {
                 botonPaso(icono: "plus", pasos: 1)
             }
         }
+        .padding(12)
+        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
+        .frame(maxHeight: navegacion.destino != nil ? .infinity : nil)
         .disabled(navegacion.preparando)
     }
 
@@ -356,9 +338,16 @@ struct NavegacionView: View {
         }
     }
 
+    /// Tarjeta de una ruta (diseño aprobado por el autor el 2026-10-09, 0.9.4):
+    /// a la izquierda, el título; km, curvas y lo que tarda de más; y un aviso
+    /// por línea, el peaje primero. Las líneas se reparten el alto: con menos
+    /// avisos quedan menos líneas y todas las tarjetas miden lo mismo. A la
+    /// derecha, en grande, el tiempo, en el sitio de la antigua marca de
+    /// elegida (la elegida se distingue por el borde y el fondo).
     private func tarjetaVariante(_ variante: VarianteRuta) -> some View {
         let esElegida = variante.tipos.contains(navegacion.elegida)
         let tono = color(variante.tipo)
+        let lista = avisos(variante)
         return Button {
             navegacion.elegida = variante.tipo
             // También si ya era la elegida: vuelve a encuadrarla
@@ -370,42 +359,49 @@ struct NavegacionView: View {
                     .foregroundStyle(.white)
                     .frame(width: 38, height: 38)
                     .background(tono, in: Circle())
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 0) {
+                    Spacer(minLength: 0)
                     Text(verbatim: variante.nombre)
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
+                    Spacer(minLength: 0)
                     Text(verbatim: resumen(variante))
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
-                    let lista = avisos(variante)
-                    if !lista.isEmpty {
-                        HStack(spacing: 8) {
-                            ForEach(lista, id: \.self) { aviso in
-                                // La autopista solo informa (a petición del autor);
-                                // el peaje y la tierra, advierten
-                                Label {
-                                    Text(verbatim: aviso.texto)
-                                } icon: {
-                                    Image(systemName: aviso.advierte ? "exclamationmark.triangle.fill" : "info.circle.fill")
-                                }
-                                .foregroundStyle(aviso.advierte ? Color.orange : Color.blue)
-                            }
+                    ForEach(lista, id: \.self) { aviso in
+                        Spacer(minLength: 0)
+                        // La autopista solo informa (a petición del autor); el
+                        // peaje y la tierra, advierten
+                        Label {
+                            Text(verbatim: aviso.texto)
+                        } icon: {
+                            Image(systemName: aviso.advierte ? "exclamationmark.triangle.fill" : "info.circle.fill")
                         }
                         .font(.caption.weight(.semibold))
+                        .foregroundStyle(aviso.advierte ? Color.orange : Color.blue)
                         .lineLimit(1)
                         .minimumScaleFactor(0.75)
                     }
+                    Spacer(minLength: 0)
                 }
                 Spacer(minLength: 0)
-                Image(systemName: esElegida ? "checkmark.circle.fill" : "circle")
-                    .font(.title3)
-                    .foregroundStyle(esElegida ? tono : Color.secondary)
+                VStack(alignment: .trailing, spacing: -2) {
+                    ForEach(lineasDuracion(variante.segundos), id: \.self) { linea in
+                        Text(verbatim: linea)
+                    }
+                }
+                .font(.title3.weight(.bold))
+                .monospacedDigit()
+                .foregroundStyle(esElegida ? tono : Color.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
             }
             .padding(.horizontal, 10)
-            .padding(.vertical, 7)
+            .padding(.vertical, 6)
+            .frame(maxHeight: .infinity)
             .background(
                 esElegida ? tono.opacity(0.12) : Color.secondary.opacity(0.08),
                 in: RoundedRectangle(cornerRadius: 12)
@@ -420,11 +416,18 @@ struct NavegacionView: View {
         .accessibilityAddTraits(esElegida ? .isSelected : [])
     }
 
-    /// «1 h 26 min · 95 km · 33 curvas», y si no es la más rápida, lo que tarda
-    /// de más.
+    /// «1 h 26 min» en dos renglones («1 h» y «26 min»); con menos de una hora,
+    /// uno («48 min»).
+    private func lineasDuracion(_ segundos: Double) -> [String] {
+        let texto = Flechas.duracion(segundos)
+        guard let corte = texto.range(of: " h ") else { return [texto] }
+        return [String(texto[..<corte.lowerBound]) + " h", String(texto[corte.upperBound...])]
+    }
+
+    /// «95 km · 33 curvas», y si no es la más rápida, lo que tarda de más
+    /// («· +15 min»). El tiempo va aparte, en grande.
     private func resumen(_ variante: VarianteRuta) -> String {
         var partes = [
-            Flechas.duracion(variante.segundos),
             Flechas.distancia(variante.metros),
             variante.curvas == 1 ? "1 curva" : "\(variante.curvas) curvas",
         ]

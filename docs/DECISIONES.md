@@ -389,7 +389,22 @@ final.
     (`Trazo.simplificar` lo conserva; con prueba);
   - al conectar se mandaba todo dos veces.
 - **Cuadro:** se describe en su `docs/CAMBIOS_CLAUDE.md`, secciones 75 y
-  75 bis (el código no entra en este repositorio). Recibe `TRAZO` y lo dibuja con una línea de
+  75 bis (el código no entra en este repositorio).
+- **0.9.3:** botón «Ocultar teclado» encima del teclado en todos los campos de
+  texto (a petición del autor).
+- **0.9.4, panel de rutas.** Diseño aprobado por el autor con vistas previas,
+  el 2026-10-09:
+  - Se quita el botón «Opciones de ruta». En su lugar van tres botones en
+    cápsula en una misma línea, aunque haya que bajar la letra: «Evitar
+    peajes», «Evitar autovías» y uno con un reloj y el tiempo extra.
+  - Activados, van rellenos del color de la app; los de evitar llevan además
+    el icono tachado.
+  - El del reloj despliega la barra del tiempo extra, con destino en el sitio
+    de las rutas.
+  - Tarjetas de ruta: título; km, curvas y lo que tarda de más; y un aviso
+    por línea, el peaje primero. Las líneas se reparten el alto.
+  - El tiempo va en grande a la derecha, en el sitio de la antigua marca de
+    elegida. Recibe `TRAZO` y lo dibuja con una línea de
   LVGL y un marcador de la moto; la distancia y la instrucción van debajo. El
   rayo verde va ahora encima del icono del móvil, que con la carga toma el
   color del tema.
