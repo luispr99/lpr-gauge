@@ -301,14 +301,15 @@ final class Navegacion: ObservableObject {
         return opciones
     }
 
-    private func pedirVariantes(hacia lugar: ResultadoBusqueda) {
+    /// `aviso`: lo que se muestra mientras se calcula (por qué se recalcula).
+    private func pedirVariantes(hacia lugar: ResultadoBusqueda, aviso avisoInicial: String? = nil) {
         tareaVariantes?.cancel()
         tareaInicio?.cancel()
         preparando = false
         generacion += 1
         let esta = generacion
         tareaVariantes = Task { [weak self] in
-            await self?.calcularVariantes(hacia: lugar, generacion: esta)
+            await self?.calcularVariantes(hacia: lugar, generacion: esta, aviso: avisoInicial)
         }
     }
 
@@ -329,7 +330,11 @@ final class Navegacion: ObservableObject {
         ultimaPeticion = .now
     }
 
-    private func calcularVariantes(hacia lugar: ResultadoBusqueda, generacion esta: Int) async {
+    private func calcularVariantes(
+        hacia lugar: ResultadoBusqueda,
+        generacion esta: Int,
+        aviso avisoInicial: String?
+    ) async {
         guard let origen = ubicacion.lastLocation else {
             aviso = "Todavía no hay posición GPS. Espera unos segundos y vuelve a elegir el destino."
             return
@@ -340,7 +345,7 @@ final class Navegacion: ObservableObject {
                 calculando = false
             }
         }
-        aviso = nil
+        aviso = avisoInicial
         candidatas = []
         variantes = []
         sinRutaDeAsfalto = false
@@ -451,18 +456,22 @@ final class Navegacion: ObservableObject {
     /// ruta o el servidor devuelve otras rutas, no empieza: vuelve a calcular
     /// las propuestas y avisa.
     private func iniciar(_ variante: VarianteRuta, generacion esta: Int) async {
+        guard generacion == esta else { return }
         defer {
             if generacion == esta {
                 preparando = false
             }
         }
         let candidata = variante.candidata
+        let simular = self.simular
         // Las rutas se piden desde la posición del momento de proponerlas. Si
         // desde entonces se ha alejado de la ruta, Ferrostar la daría por
         // desviada nada más empezar y recalcularía otra
-        if !simular, let destino, let lejos = distanciaALaRuta(candidata), lejos > Self.metrosMaximosDesdeLaRuta {
-            aviso = "Te has alejado de la ruta desde que se calculó: se han vuelto a calcular las rutas."
-            pedirVariantes(hacia: destino)
+        if !simular, let destino, seHaAlejado(de: candidata) {
+            pedirVariantes(
+                hacia: destino,
+                aviso: "Te has alejado de la ruta desde que se calculó: se vuelven a calcular las rutas."
+            )
             return
         }
         do {
@@ -471,9 +480,11 @@ final class Navegacion: ObservableObject {
             let rutas = try await ClienteValhalla.rutasFerrostar(candidata.peticion)
             guard generacion == esta, !navegando else { return }
             guard let ruta = Self.emparejar(candidata, en: rutas) else {
-                aviso = "Las rutas han cambiado en el servidor desde que se calcularon: se han vuelto a calcular. Elige otra vez y pulsa «Iniciar»."
+                let aviso = "Las rutas han cambiado en el servidor desde que se calcularon. Se vuelven a calcular: elige otra vez y pulsa «Iniciar»."
                 if let destino {
-                    pedirVariantes(hacia: destino)
+                    pedirVariantes(hacia: destino, aviso: aviso)
+                } else {
+                    self.aviso = aviso
                 }
                 return
             }
@@ -532,19 +543,26 @@ final class Navegacion: ObservableObject {
         return rutas.first(where: coincide)
     }
 
-    /// A partir de esta distancia a la ruta (con buena precisión del GPS), se
-    /// considera que el usuario se ha ido de ella. Ferrostar marca desvío a
-    /// partir de 50 m; se deja margen.
-    private static let metrosMaximosDesdeLaRuta = 100.0
+    /// Cuánto puede haberse alejado de la ruta desde que se calculó. Por debajo
+    /// de los 50 m a partir de los que Ferrostar marca desvío (supuesto).
+    private static let metrosMaximosAlejado = 40.0
 
-    /// Distancia de la posición actual al trazado de la ruta; nil si no hay
-    /// posición o su precisión es peor de 25 m.
-    private func distanciaALaRuta(_ candidata: RutaCandidata) -> Double? {
+    /// Si, con buena precisión del GPS (≤25 m), la posición está ahora más lejos
+    /// de la ruta que el origen con el que se calculó, en más de
+    /// `metrosMaximosAlejado`. Se compara con el origen porque Valhalla ajusta
+    /// la salida a la carretera más cercana: desde una casa o un aparcamiento
+    /// lejos de la carretera, la ruta empieza lejos y no hay que recalcularla.
+    private func seHaAlejado(de candidata: RutaCandidata) -> Bool {
         guard let actual = ubicacion.lastLocation,
               actual.horizontalAccuracy > 0, actual.horizontalAccuracy <= 25
-        else { return nil }
-        let punto = PuntoRuta(latitud: actual.coordinates.lat, longitud: actual.coordinates.lng)
-        return Simplificar.distancia(de: punto, a: candidata.ruta.puntos)
+        else { return false }
+        let ahora = PuntoRuta(latitud: actual.coordinates.lat, longitud: actual.coordinates.lng)
+        let origen = candidata.peticion.origen.coordinates
+        let alCalcular = PuntoRuta(latitud: origen.lat, longitud: origen.lng)
+        guard let lejos = Simplificar.distancia(de: ahora, a: candidata.ruta.puntos),
+              let antes = Simplificar.distancia(de: alCalcular, a: candidata.ruta.puntos)
+        else { return false }
+        return lejos - antes > Self.metrosMaximosAlejado
     }
 
     func terminar() {

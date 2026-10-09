@@ -185,10 +185,13 @@ final.
     coincidan la distancia y el tiempo (±0,2 % o 5 m/5 s). Si ninguna coincide
     (el servidor ha cargado datos nuevos o ha devuelto menos alternativas), no
     se empieza: se vuelven a calcular las propuestas y se avisa.
-  - Tampoco se empieza si, con buena precisión del GPS (≤25 m), la posición
-    está a más de 100 m de la ruta. Las rutas salen de la posición del momento
-    de proponerlas, y Ferrostar marca desvío a partir de 50 m. Se vuelven a
-    calcular y se avisa.
+  - Tampoco se empieza si, con buena precisión del GPS (≤25 m), la posición se
+    ha alejado de la ruta más de 40 m respecto al origen con el que se calculó
+    (supuesto, por debajo de los 50 m a partir de los que Ferrostar marca
+    desvío). Las rutas salen de la posición del momento de proponerlas. Se
+    vuelven a calcular y se avisa. Se compara con el origen porque Valhalla
+    ajusta la salida a la carretera más cercana: desde una casa o un
+    aparcamiento lejos de la carretera la ruta empieza lejos, y eso no cuenta.
   - Comprobado el 2026-10-09 con puntos públicos (Madrid–Segovia): las dos
     respuestas dan las mismas tres rutas, en el mismo orden y con la misma
     distancia y tiempo, y una maniobra por paso.

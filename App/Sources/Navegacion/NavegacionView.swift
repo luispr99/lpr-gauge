@@ -46,7 +46,7 @@ struct NavegacionView: View {
     private var exploracion: some View {
         GeometryReader { geometria in
             let anchura = geometria.size.width
-            let altoPanel = geometria.size.height * 0.62
+            let altoPanel = geometria.size.height * 0.7
             mapaExploracion
                 .onMapCameraChange(frequency: .onEnd) { contexto in
                     let nivel = TrazoMapa.nivel(
@@ -162,19 +162,30 @@ struct NavegacionView: View {
         .padding(.top, 8)
     }
 
-    /// Panel de abajo: lo que no cabe en `altoMaximo` se desplaza, salvo el pie
-    /// (aviso, botones y atribución), que queda siempre a la vista.
+    /// Panel de abajo, de como mucho `altoMaximo`. Arriba, fijas, las
+    /// preferencias y la barra (fuera de la parte que se desplaza, para que
+    /// mover la barra no la vuelva a crear y corte el gesto); en medio, lo que
+    /// se desplaza si no cabe; abajo, fijo, el pie.
     private func panelInferior(altoMaximo: CGFloat) -> some View {
-        VStack(spacing: 0) {
-            ViewThatFits(in: .vertical) {
-                contenidoPanel
-                ScrollView {
-                    contenidoPanel
+        let limite = AltoMaximo(alto: altoMaximo)
+        return limite {
+            VStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: 10) {
+                    preferenciasRuta
+                    barraMargen
+                        .disabled(navegacion.preparando)
                 }
+                .padding([.horizontal, .top])
+                ViewThatFits(in: .vertical) {
+                    contenidoPanel
+                    ScrollView {
+                        contenidoPanel
+                    }
+                }
+                piePanel
             }
-            piePanel
+            .frame(maxWidth: .infinity)
         }
-        .frame(maxHeight: altoMaximo)
         .background(.regularMaterial)
     }
 
@@ -211,20 +222,19 @@ struct NavegacionView: View {
                     .foregroundStyle(.secondary)
             }
 
-            preferenciasRuta
-            barraMargen
-                .disabled(navegacion.preparando)
-
             if !navegacion.variantes.isEmpty {
-                Toggle("Simular el recorrido", isOn: $navegacion.simular)
-                if navegacion.simular {
-                    Picker("Velocidad", selection: $navegacion.factorSimulacion) {
-                        Text(verbatim: "36 km/h").tag(UInt64(1))
-                        Text(verbatim: "72 km/h").tag(UInt64(2))
-                        Text(verbatim: "108 km/h").tag(UInt64(3))
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("Simular el recorrido", isOn: $navegacion.simular)
+                    if navegacion.simular {
+                        Picker("Velocidad", selection: $navegacion.factorSimulacion) {
+                            Text(verbatim: "36 km/h").tag(UInt64(1))
+                            Text(verbatim: "72 km/h").tag(UInt64(2))
+                            Text(verbatim: "108 km/h").tag(UInt64(3))
+                        }
+                        .pickerStyle(.segmented)
                     }
-                    .pickerStyle(.segmented)
                 }
+                .disabled(navegacion.preparando)
             } else if !navegacion.calculando {
                 HStack {
                     Label(navegacion.posicionActual == nil
@@ -237,8 +247,9 @@ struct NavegacionView: View {
                 .font(.footnote)
             }
         }
-        .padding([.horizontal, .top])
-        .padding(.bottom, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal)
+        .padding(.vertical, 8)
     }
 
     /// Lo que tiene que verse siempre: el aviso, los botones y la atribución.
@@ -590,6 +601,24 @@ struct NavegacionView: View {
         Text(verbatim: "Mapa y búsqueda: Apple · Rutas: Valhalla (FOSSGIS) · Datos de ruta © colaboradores de OpenStreetMap")
             .font(.caption2)
             .foregroundStyle(.secondary)
+    }
+}
+
+/// Propone a su contenido como mucho `alto` y ocupa solo lo que el contenido
+/// necesite. Un `.frame(maxHeight:)` crecería hasta el máximo si le proponen
+/// más altura.
+private struct AltoMaximo: Layout {
+    var alto: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let contenido = subviews.first else { return .zero }
+        return contenido.sizeThatFits(
+            ProposedViewSize(width: proposal.width, height: min(proposal.height ?? alto, alto))
+        )
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
     }
 }
 
