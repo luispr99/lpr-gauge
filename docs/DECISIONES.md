@@ -1476,3 +1476,14 @@ Ferrostar:
   0.20.3. El registro de «Placa» apunta el permiso y cuándo se crean y se
   sueltan las sesiones.
 - **Sin probar:** si no funciona, se vuelve a la 0.20.3.
+
+### 2026-10-10 · «Siempre»: las sesiones sobrantes se sueltan al momento (0.21.1)
+
+- **El autor, con la 0.21.0:** con la app en segundo plano y sin ruta seguía
+  el icono de ubicación.
+- **Causa probable:** al abrirse con «Mientras se usa la app», la app creó
+  las sesiones persistentes (como la 0.20.3); al pasar a «Siempre» no las
+  soltaba hasta terminar una ruta. (Si el permiso sigue sin ser «Siempre»,
+  el icono es lo esperado: se ve en «Placa».)
+- **Cambio:** con «Siempre», al cambiar el permiso y al abrir la app, si no
+  hay ruta ni GPS en marcha, se sueltan (`ProveedorUbicacion.soltarSiSobran`).

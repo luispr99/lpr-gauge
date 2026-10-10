@@ -226,6 +226,21 @@ final class ProveedorUbicacion: NSObject, LocationProviding, CLLocationManagerDe
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         authorizationStatus = manager.authorizationStatus
         alDiagnostico?("Permiso de ubicación: \(descripcionPermiso)")
+        soltarSiSobran()
+    }
+
+    /// Con «Siempre» y sin GPS en marcha (ni posiciones en vivo ni guiado),
+    /// las sesiones que se crearon con el permiso anterior sobran: fuera, para
+    /// que no quede el indicador de ubicación (0.21.1; en la 0.21.0 se
+    /// quedaban hasta terminar una ruta, lo vio el autor). También al abrir
+    /// la app.
+    func soltarSiSobran() {
+        guard siempre, tareaEnVivo == nil, !gestor.allowsBackgroundLocationUpdates,
+              sesionFondo != nil || sesionServicio != nil else { return }
+        sesionFondo?.invalidate()
+        sesionFondo = nil
+        sesionServicio = nil
+        alDiagnostico?("Sesiones de ubicación soltadas: con «Siempre» y sin ruta no hacen falta")
     }
 
     // MARK: - Permiso «Siempre» (prueba, 0.21.0)

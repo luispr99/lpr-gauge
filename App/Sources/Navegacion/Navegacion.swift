@@ -360,6 +360,9 @@ final class Navegacion: ObservableObject {
     private func vuelveAPrimerPlano() {
         ubicacion.pedirSiempre()
         ubicacion.mantenerSesion(primerPlano: true)
+        if !navegando && !preparando && destino == nil {
+            ubicacion.soltarSiSobran()
+        }
         guard !navegando, !preparando, let destino else { return }
         if variantes.isEmpty && !calculando {
             pedirVariantes(hacia: destino)
