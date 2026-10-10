@@ -91,6 +91,8 @@ final class EnlaceBLE: NSObject, ObservableObject {
     private var rutasCuadro: [RutaGuardada] = []
     private var estadoOrden = EstadoOrdenRuta.ninguna
     private var ecoOrden: UInt8 = 0
+    /// La ruta calculada para confirmar en el cuadro (estado 4, v0.14).
+    private var propuestaCuadro: PropuestaRuta?
     private var listasMandadas: [UInt8: [RutaGuardada]] = [:]
     /// El contador de la última orden atendida (STATUS, byte 8).
     private var ultimaOrden: UInt8 = 0
@@ -384,6 +386,7 @@ final class EnlaceBLE: NSObject, ObservableObject {
         rutasPendiente = false
         estadoOrden = .ninguna
         ecoOrden = 0
+        propuestaCuadro = nil
         listasMandadas.removeAll()
         ultimaOrden = 0
         info = nil
@@ -522,7 +525,9 @@ final class EnlaceBLE: NSObject, ObservableObject {
                 ultimaOrden = orden.contador
                 let lista = listasMandadas[orden.lista]
                 let ruta = lista.flatMap { Int(orden.ruta) < $0.count ? $0[Int(orden.ruta)] : nil }
-                anotar("Orden de ruta del cuadro: \(orden.codigo == .cancelar ? "cancelar" : "empezar") la \(Int(orden.ruta) + 1)ª")
+                let que = orden.codigo == .cancelar ? "cancelar" : orden.codigo == .empezar ? "empezar"
+                    : orden.codigo == .terminar ? "terminar" : "calcular"
+                anotar("Orden de ruta del cuadro: \(que) la \(Int(orden.ruta) + 1)ª")
                 alRecibirOrden?(orden, ruta)
             }
             // El eco de NAV va siempre (byte 1); solo vale si la placa lo admite.
@@ -682,10 +687,11 @@ final class EnlaceBLE: NSObject, ObservableObject {
 
     // MARK: - Rutas del cuadro (PROTOCOLO.md §7 quinquies, v0.13)
 
-    /// Si la placa enseña las últimas rutas y pide empezar una (bit 12).
+    /// Si la placa enseña las rutas con sus opciones y confirma la propuesta
+    /// (bit 13, v0.14; con solo el bit 12, de la v0.13, no se manda RUTAS).
     var admiteRutas: Bool {
         estado == .conectado && caracRutas != nil && caracStatus != nil
-            && info?.capacidades.contains(.rutas) == true
+            && info?.capacidades.contains(.rutasConfirmar) == true
     }
 
     /// Las rutas que enseña el cuadro (HistorialRutas.paraElCuadro).
@@ -695,9 +701,10 @@ final class EnlaceBLE: NSObject, ObservableObject {
     }
 
     /// En qué está la orden `eco` del cuadro (Navegacion).
-    func ponerEstadoOrden(_ estado: EstadoOrdenRuta, eco: UInt8) {
+    func ponerEstadoOrden(_ estado: EstadoOrdenRuta, eco: UInt8, propuesta: PropuestaRuta? = nil) {
         estadoOrden = estado
         ecoOrden = eco
+        propuestaCuadro = estado == .propuesta ? propuesta : nil
         enviarRutas()
     }
 
@@ -710,7 +717,7 @@ final class EnlaceBLE: NSObject, ObservableObject {
         rutasPendiente = false
         let numero = secuenciaRutas.siguiente()
         let mensaje = MensajeRutas(secuencia: numero, estado: estadoOrden, ecoOrden: ecoOrden,
-                                   rutas: rutasCuadro.map(RutaCuadro.init))
+                                   rutas: rutasCuadro.map(RutaCuadro.init), propuesta: propuestaCuadro)
         let bytes = mensaje.codificar(maximo: periferico.maximumWriteValueLength(for: .withoutResponse))
         // Las de esta secuencia, para la orden; solo las últimas, que son las
         // que puede estar enseñando el cuadro

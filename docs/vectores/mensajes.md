@@ -1,7 +1,7 @@
 # Vectores de prueba del protocolo
 
 Ejemplos de mensajes con sus bytes exactos, en hexadecimal y en el orden en que
-viajan. Salen de [PROTOCOLO.md](../PROTOCOLO.md) (v0.13). Las pruebas de `Core`
+viajan. Salen de [PROTOCOLO.md](../PROTOCOLO.md) (v0.14). Las pruebas de `Core`
 (`Core/Tests/LPRCoreTests/MensajesTests.swift`) comprueban estos mismos bytes; el
 firmware y la app de Android deberán pasar los mismos. Si cambia un vector,
 cambian a la vez el documento, las pruebas y este fichero.
@@ -37,24 +37,30 @@ cambian a la vez el documento, las pruebas y este fichero.
   byte se ignoraba; ahora es el eco de `CRUCES`.
 - v0.13, con la orden de ruta (12 bytes): `01 10 00 00 03 04 05 06 05 01 09 02`
   es eco de `NAV` 16, de `MOVIL` 3, de `NAV_TEXT` 4, de `TRAZO` 5 y de `CRUCES`
-  6, y la orden 5: empezar (1) la ruta 2 (la tercera) del `RUTAS` 9. Con menos
+  6, y la orden 5: calcular (1; en la v0.13, empezar) la ruta 2 (la tercera)
+  del `RUTAS` 9. Con menos
   de 12 bytes, sin orden; un código que no se conoce (por ejemplo, 7), sin
   código.
 
-## `RUTAS` (v0.13)
+## `RUTAS` (v0.14)
 
 Cabecera: versión, secuencia, estado de la orden, eco de la orden y número de
-rutas. Por ruta: tipo, distancia (decenas de metros), tiempo (minutos),
-curvas, peaje y autopista (decenas de metros), largo del nombre y nombre.
+rutas. Por ruta: tipo, opciones (bit 0 peajes, bit 1 autovías), margen en
+por ciento, largo del nombre y nombre. Con el estado 4, la propuesta detrás:
+tipo, avisos, distancia (decenas de metros), tiempo (minutos), curvas, tiempo
+de más (minutos), peaje y autopista (decenas de metros).
 
 | Caso | Bytes |
 |---|---|
-| Secuencia 7, calculando (1), eco 3, dos rutas; la primera: de curvas (1), 58 km (5800 = `A8 16`), 65 min, 112 curvas, sin peaje, 12,34 km de autopista (1234 = `D2 04`), «Puerto» | `01 07 01 03 02 01 A8 16 41 00 70 00 00 00 D2 04 06 50 75 65 72 74 6F` y la segunda |
-| Una ruta sin datos, «X» | `01 02 00 00 01 00 FF FF FF FF FF FF FF FF FF FF 01 58` |
+| Secuencia 7, calculando (1), eco 3, dos rutas; la primera: de curvas (1), sin peajes ni autovías (0), +50 % (`32`), «Madrid»; la segunda: la más rápida, con peajes y autovías (3), +25 %, «Taller ñ» | `01 07 01 03 02 01 00 32 06 4D 61 64 72 69 64 00 03 19 09 …` |
+| Secuencia 8, propuesta (4), eco 4, la primera ruta; propuesta: de curvas, 58 km (5800 = `A8 16`), 65 min, 112 curvas, 18 min de más, sin peaje, 2,1 km de autopista (210 = `D2 00`) | `01 08 04 04 01 01 00 32 06 4D 61 64 72 69 64 01 00 A8 16 41 00 70 00 12 00 00 00 D2 00` |
 
+- El estado 4 sin propuesta no se manda (va como 3); con la propuesta
+  cortada, se descarta.
+- El margen se satura en 200 (`C8`).
 - Los nombres, como mucho de 40 bytes, se cortan sin partir un carácter, todos
-  al mismo largo, lo justo para caber en lo que admita la conexión; si sin
-  nombre tampoco caben, van menos rutas.
+  al mismo largo, lo justo para caber en lo que admita la conexión (la
+  propuesta va siempre entera); si sin nombre tampoco caben, van menos rutas.
 - Se descarta un mensaje corto, de otra versión, con más de tres rutas, con una
   ruta cortada o con un nombre que no es UTF-8.
 
@@ -235,5 +241,6 @@ moto (0, 0) y los de delante.
 | Cuadro con todo, también el movimiento (v0.9) | `01 01 EF 07 00 00 05 00` | 1 | las de 0.4.0 + movimiento (0x07EF) | sin límite | 0.5.0 |
 | Cuadro con los carriles (v0.12) | `01 01 EF 0F 00 00 06 00` | 1 | las de 0.5.0 + carriles (0x0FEF) | sin límite | 0.6.0 |
 | Cuadro con las rutas (v0.13) | `01 01 EF 1F 00 00 07 00` | 1 | las de 0.6.0 + rutas (0x1FEF) | sin límite | 0.7.0 |
+| Cuadro con confirmar y terminar (v0.14) | `01 01 EF 3F 00 00 08 00` | 1 | las de 0.7.0 + rutas con confirmación (0x3FEF) | sin límite | 0.8.0 |
 
 - Se descarta cualquier mensaje de menos de 8 bytes.

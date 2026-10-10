@@ -1,6 +1,6 @@
 # Protocolo BLE móvil → cuadro
 
-> **Estado: borrador v0.13 (2026-10-10), sin validar.** Los puntos marcados
+> **Estado: borrador v0.14 (2026-10-10), sin validar.** Los puntos marcados
 > **[PENDIENTE]** faltan por completar. Mientras sea borrador, nada de lo que hay
 > aquí es definitivo y puede cambiar sin mantener compatibilidad. Los cambios de
 > cada versión están en la [sección 13](#13-cambios).
@@ -36,7 +36,7 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
 | `MOVIL` | `f4640008-813a-45b8-8ca8-f5f9e18c21d1` | escritura sin respuesta | cifrado | ≤ 20 B |
 | `TRAZO` | `f4640009-813a-45b8-8ca8-f5f9e18c21d1` | escritura sin respuesta | cifrado | ≤ 180 B (sección 7 ter) |
 | `CRUCES` | `f464000a-813a-45b8-8ca8-f5f9e18c21d1` | escritura sin respuesta | cifrado | ≤ 179 B (sección 7 quater) |
-| `RUTAS` | `f464000b-813a-45b8-8ca8-f5f9e18c21d1` | escritura sin respuesta | cifrado | ≤ 161 B (sección 7 quinquies, v0.13) |
+| `RUTAS` | `f464000b-813a-45b8-8ca8-f5f9e18c21d1` | escritura sin respuesta | cifrado | ≤ 151 B (sección 7 quinquies, v0.14) |
 
 - **Anuncio:** el UUID del servicio va en el **paquete principal**, no en la
   respuesta de escaneo. iOS, en segundo plano, solo encuentra periféricos
@@ -83,7 +83,7 @@ Todos los UUID comparten la base `f464xxxx-813a-45b8-8ca8-f5f9e18c21d1`
 |---|---|---|---|
 | 0 | versión | u8 | Versión del protocolo del dispositivo: 1. |
 | 1 | tipo | u8 | 1 = cuadro de moto; 2 = firmware de referencia (solo serie). |
-| 2-3 | capacidades | u16 | Bit 0 `NAV`, bit 1 `GPS`, bit 2 `STATUS`, bit 3 `NAV_TEXT`, bit 4 `CONFIG`, bit 5 `MOVIL`, bit 6 `TRAZO`, bit 7 `MOVIL` al cambiar (sección 7), bit 8 `CRUCES`, bit 9 anillos: dibuja los anillos de las rotondas de `CRUCES` (sección 7 quater, v0.8), bit 10 movimiento: acepta `TRAZO` con la posición en la ruta y los puntos de detrás, y mueve el dibujo él solo entre mensajes (sección 7 ter, v0.9), bit 11 carriles: acepta `NAV` con los carriles y los dibuja (sección 5, v0.12), bit 12 rutas: enseña las últimas rutas de `RUTAS` y pide empezar una con `STATUS` (secciones 7 quinquies y 9, v0.13). |
+| 2-3 | capacidades | u16 | Bit 0 `NAV`, bit 1 `GPS`, bit 2 `STATUS`, bit 3 `NAV_TEXT`, bit 4 `CONFIG`, bit 5 `MOVIL`, bit 6 `TRAZO`, bit 7 `MOVIL` al cambiar (sección 7), bit 8 `CRUCES`, bit 9 anillos: dibuja los anillos de las rotondas de `CRUCES` (sección 7 quater, v0.8), bit 10 movimiento: acepta `TRAZO` con la posición en la ruta y los puntos de detrás, y mueve el dibujo él solo entre mensajes (sección 7 ter, v0.9), bit 11 carriles: acepta `NAV` con los carriles y los dibuja (sección 5, v0.12), bit 12 rutas de la v0.13 (formato retirado en la v0.14: la app ya no lo usa), bit 13 rutas con confirmación: enseña las rutas de `RUTAS` con sus opciones, pide calcular una y la propuesta, y empezarla o cancelarla con `STATUS` (secciones 7 quinquies y 9, v0.14). |
 | 4 | frecuencia máxima | u8 | Mensajes por segundo y característica que acepta (0 = sin límite). |
 | 5-7 | versión de firmware | u8 × 3 | Mayor, menor, parche. |
 
@@ -401,44 +401,55 @@ formato de arriba.
   secuencia de ese `TRAZO`. Tras un `TRAZO` sin tramo no se manda: los cruces
   caducan con su `TRAZO`.
 
-## 7 quinquies. `RUTAS` (escritura sin respuesta): últimas rutas para empezar desde el dispositivo
+## 7 quinquies. `RUTAS` (escritura sin respuesta): rutas para empezar desde el dispositivo
 
-A petición del autor (2026-10-10): sin ruta, el dispositivo enseña las tres
-últimas rutas de la app y, al tocar una, pide a la app que la empiece. Solo
-con el bit 12 de capacidades.
+A petición del autor (2026-10-10): sin ruta, el dispositivo enseña tres rutas
+de la app (sus accesos directos o, en los huecos libres, las más recientes)
+con sus opciones. Al tocar una, la app la calcula de nuevo desde donde esté,
+como si se pidiera en ella, y manda la propuesta; el dispositivo la enseña
+para confirmar, y con «Iniciar» la app empieza a guiar. Formato de la v0.14,
+solo con el bit 13 de capacidades (el de la v0.13, con el bit 12, ya no se
+usa).
 
 | Byte | Campo | Tipo | Descripción |
 |---|---|---|---|
 | 0 | versión | u8 | 1 |
-| 1 | secuencia | u8 | Cambia con cada `RUTAS` distinto (de lista o de estado). La orden de `STATUS` la lleva para decir de qué lista es la ruta tocada. |
-| 2 | estado de la orden | u8 | 0 ninguna en curso (o ya atendida); 1 calculando la ruta; 2 rechazada: la app no está en primer plano y no puede empezar a guiar; 3 no se pudo (sin ruta, error o lista que ya no está). |
+| 1 | secuencia | u8 | Cambia con cada `RUTAS` distinto (de lista, de estado o de propuesta). La orden de `STATUS` la lleva para decir de qué lista es la ruta tocada. |
+| 2 | estado de la orden | u8 | 0 ninguna en curso (o ya atendida); 1 calculando (o empezando a guiar); 2 la app no ha podido arrancar el GPS (por ejemplo, porque iOS no se lo deja): abre la app; 3 no se pudo (sin ruta, error o lista que ya no está); 4 propuesta lista para confirmar (va detrás). |
 | 3 | eco de la orden | u8 | Contador (`STATUS`, byte 8) de la última orden que la app ha atendido; 0 ninguna. |
 | 4 | rutas | u8 | Cuántas van detrás, de 0 a 3. |
-| 5… | por ruta | — | Tipo (u8: 0 la más rápida, 1 la de más curvas, 2 por tierra), distancia (u16, decenas de metros; `0xFFFF` desconocida; satura en 65 534), tiempo (u16, minutos; `0xFFFF`), curvas (u16; `0xFFFF`), peaje y autopista (u16 cada uno, decenas de metros; 0 ninguno; `0xFFFF` no se sabe), largo del nombre (u8, de 0 a 40) y el nombre (UTF-8). |
+| 5… | por ruta | — | Tipo (u8: 0 la más rápida, 1 la de más curvas, 2 por tierra), opciones (u8: bit 0, se admiten peajes; bit 1, se admiten autovías), margen de tiempo para la de más curvas (u8, por ciento, de 0 a 200), largo del nombre (u8, de 0 a 40) y el nombre (UTF-8). |
+| … | propuesta | — | Solo con el estado 4: tipo (u8, como arriba), avisos (u8: bit 0, el tipo de la ruta tocada no ha salido y se propone la más rápida), distancia (u16, decenas de metros), tiempo (u16, minutos), curvas (u16), tiempo de más sobre la más rápida (u16, minutos), peaje y autopista (u16 cada uno, decenas de metros; 0 ninguno). Los u16 sin dato, `0xFFFF`; saturan en 65 534. 14 bytes. |
 
-- Las rutas, de la más reciente a la más antigua, con lo que medía la ruta
-  propuesta la última vez que se inició (la app vuelve a calcularla desde
-  donde esté), también el peaje y la autopista que la app enseña en su
-  tarjeta (a petición del autor). El dispositivo no puede cambiar sus
-  opciones.
+- Las rutas, con las opciones guardadas con ellas (no lo que midieron): el
+  dispositivo no puede cambiarlas.
 - La app corta los nombres sin partir un carácter para que el mensaje quepa en
-  lo que admita la conexión; si aun así no cabe, manda menos rutas.
-- La app lo manda al estar lista la conexión, al cambiar la lista o el estado
-  de la orden y con el reenvío completo. El dispositivo lo olvida al
+  lo que admita la conexión; si aun así no cabe, manda menos rutas. La
+  propuesta va siempre entera.
+- La app lo manda al estar lista la conexión, al cambiar la lista, el estado
+  o la propuesta (el peaje y la autopista tramo a tramo llegan un momento
+  después que la ruta) y con el reenvío completo. El dispositivo lo olvida al
   desconectarse.
-- **La orden** va en `STATUS` (sección 9, bytes 8-11): al tocar una ruta, el
-  dispositivo sube el contador y notifica `STATUS` con el código 1 (empezar),
-  la secuencia del `RUTAS` que enseñaba y la posición de la ruta. Tocarla otra
-  vez manda el código 2 (cancelar). La app atiende cada contador una vez:
-  - con la app en primer plano, carga la ruta como en su pestaña «Rutas» y la
-    empieza en cuanto la tiene (estado 1 y, al empezar a guiar, 0; si no
-    puede, 3);
-  - si no está en primer plano, desde la app 0.19.0 intenta arrancar el GPS
-    con las APIs nuevas de iOS (prueba); si en 10 s no hay posiciones, estado
-    2 (abre la app). Con la app cerrada a mano, iOS no la despierta y la orden
-    no llega (el dispositivo la da por perdida).
+- **Las órdenes** van en `STATUS` (sección 9, bytes 8-11): el dispositivo
+  sube el contador y notifica `STATUS` con el código, la secuencia del
+  `RUTAS` que enseñaba y la posición de la ruta. La app atiende cada contador
+  una vez:
+  - código 1, calcular: carga la ruta como en su pestaña «Rutas» (mismas
+    opciones y tipo) y la calcula; estado 1 y después 4 con la propuesta, o 3
+    si no sale ninguna. Con la app en segundo plano, arranca el GPS con las
+    APIs nuevas de iOS (comprobado por el autor el 2026-10-10 con la app
+    0.19.0); si en 10 s no hay posiciones, estado 2. Con la app cerrada a
+    mano, iOS no la despierta y la orden no llega;
+  - código 3, empezar: empieza a guiar la propuesta (estado 1 y, al empezar,
+    0; si no puede, 3);
+  - código 2, cancelar: deja la ruta (estado 0);
+  - código 4, terminar: termina la ruta en curso, como el botón de la app, y
+    apaga el GPS (estado 0). El dispositivo la pide desde el mapa: un toque
+    abre una pantalla con un botón «Terminar» que se cierra sola a los 3 s (a
+    petición del autor, para cancelar desde la moto).
 - Si en 5 s no llega un `RUTAS` con el eco de su orden, el dispositivo la da
-  por perdida (supuesto).
+  por perdida; calculando, espera hasta 60 s; con la propuesta en pantalla,
+  la cancela a los 2 min (supuestos).
 
 ## 8. Códigos de maniobra
 
@@ -469,7 +480,7 @@ la da el ángulo de `NAV` (sección 5). Ya no se intenta seguir los códigos
 | 6 | eco `TRAZO` | u8 | Última secuencia de `TRAZO` recibida (añadido en la v0.4). |
 | 7 | eco `CRUCES` | u8 | Última secuencia de `CRUCES` recibida (añadido en la v0.6). |
 | 8 | orden: contador | u8 | Sube con cada orden de ruta (sección 7 quinquies); 0 ninguna desde la conexión; tras 255, 1 (v0.13). |
-| 9 | orden: código | u8 | 1 empezar la ruta, 2 cancelar (v0.13). |
+| 9 | orden: código | u8 | 1 calcular la ruta (en la v0.13, empezarla), 2 cancelar, 3 empezar la propuesta, 4 terminar la ruta en curso (v0.14). |
 | 10 | orden: lista | u8 | Secuencia del `RUTAS` que enseñaba el dispositivo (v0.13). |
 | 11 | orden: ruta | u8 | Posición de la ruta en esa lista, desde 0 (v0.13). |
 
@@ -541,6 +552,11 @@ la da el ángulo de `NAV` (sección 5). Ya no se intenta seguir los códigos
 
 ## 13. Cambios
 
+- **v0.14 (2026-10-10):** `RUTAS` (sección 7 quinquies) con las opciones de
+  cada ruta en vez de lo que midió, el estado 4 con la propuesta para
+  confirmar, y la orden 3 (empezar) en `STATUS`; la 1 pasa a ser calcular.
+  Bit 13 de capacidades; el formato de la v0.13 (bit 12) se retira. La versión
+  del formato sigue siendo 1.
 - **v0.13 (2026-10-10):** `RUTAS` (sección 7 quinquies) con las tres últimas
   rutas de la app, y orden de ruta en los bytes 8-11 de `STATUS` (sección 9),
   con el bit 12 de capacidades. La versión del formato sigue siendo 1.

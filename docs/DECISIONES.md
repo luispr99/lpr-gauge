@@ -1377,3 +1377,28 @@ Ferrostar:
   la cierra a mano desde el selector de apps.
 - **Sin probar** en el iPhone: decide si se hace el flujo completo (recalcular
   y confirmar en el cuadro).
+
+### 2026-10-10 · Confirmar en el cuadro y terminar desde el mapa (0.20.0)
+
+- **El autor:** probada la 0.19.0 («Si que funciona»: la orden del cuadro
+  despierta la app en segundo plano y arranca el GPS), el flujo de su vista
+  previa: en la lista del cuadro, bajo el destino, «Peaje: si/no, Autovia
+  si/no y un icono de tiempo con +X%» y el icono del tipo; al tocar, la app
+  vuelve a calcular la ruta con esas opciones y el cuadro enseña una pantalla
+  de confirmar con km, tiempo, curvas, autovía, etc., e «Iniciar» y
+  «Cancelar». Y en el mapa, un toque abre una pantalla entera con un botón
+  «Terminar» muy grande que se cierra sola a los 3 s («la idea es cancelar
+  desde la moto»); al terminar, el GPS se apaga.
+- **Protocolo v0.14** (`PROTOCOLO.md` §7 quinquies y §9): RUTAS lleva las
+  opciones de cada ruta (tipo, peajes, autovías, margen) en vez de lo que
+  midió; el estado 4 lleva la propuesta; las órdenes son 1 calcular, 2
+  cancelar, 3 empezar y 4 terminar. Bit 13; la app ya no manda RUTAS a un
+  cuadro con solo el bit 12 (firmware 0.7.0).
+- **La app** (`Navegacion.ordenDelCuadro` y `mandarPropuesta`): calcula como
+  desde «Rutas» (mismas opciones y tipo) y manda la ruta del tipo de la
+  tocada; si no ha salido, la que quede elegida (normalmente la más rápida),
+  con el aviso. El peaje y la autopista tramo a tramo, cuando llegan, vuelven
+  a mandar la propuesta. «Iniciar» empieza a guiar; «Terminar», como el botón
+  de la app (y apaga el GPS).
+- **Sin probar:** sin compilar en local; las pruebas de `Core` corren en el
+  CI. Sin probar en el iPhone ni con el cuadro.

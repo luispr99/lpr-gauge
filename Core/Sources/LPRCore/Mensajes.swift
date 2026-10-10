@@ -954,6 +954,10 @@ public struct Capacidades: OptionSet, Equatable {
     /// El dispositivo enseña las últimas rutas de RUTAS y pide empezar una
     /// con STATUS (v0.13, §7 quinquies y §9).
     public static let rutas = Capacidades(rawValue: 1 << 12)
+    /// Rutas con confirmación (v0.14, §7 quinquies): opciones en la lista,
+    /// propuesta para confirmar y orden de empezar. La app solo manda RUTAS con
+    /// este bit; el formato del bit 12 ya no se usa.
+    public static let rutasConfirmar = Capacidades(rawValue: 1 << 13)
 }
 
 public struct DeviceInfo: Equatable {

@@ -196,9 +196,12 @@ final class Navegacion: ObservableObject {
     private var rutaCargada: RutaGuardada?
     /// La orden de ruta del cuadro en curso (su contador, v0.13): se le
     /// contesta por el enlace al empezar, al no poder o al cancelarla. Con
-    /// `iniciarAlCalcular`, la ruta empieza sola en cuanto hay propuestas.
+    /// `proponerAlCalcular`, en cuanto hay propuestas se manda al cuadro la
+    /// ruta para confirmar (v0.14); con `propuestaEnCuadro`, la está enseñando
+    /// y se espera su «Iniciar» o «Cancelar».
     private var ordenCuadro: UInt8?
-    private var iniciarAlCalcular = false
+    private var proponerAlCalcular = false
+    private var propuestaEnCuadro = false
     /// La orden llegó con la app en segundo plano (prueba, 0.19.0).
     private var ordenEnFondo = false
     /// Escala del tramo del cuadro (TRAZO, §7 ter): el nivel y la maniobra para
@@ -269,7 +272,13 @@ final class Navegacion: ObservableObject {
     /// momento después que las rutas (a petición del autor, 2026-10-09: los de
     /// las maniobras se pasaban). Si la petición falla, va en detallesFallidos
     /// y la tarjeta usa los de las maniobras, como un máximo.
-    @Published private(set) var detalles: [Int: DetalleVias] = [:]
+    @Published private(set) var detalles: [Int: DetalleVias] = [:] {
+        didSet {
+            // El peaje y la autopista tramo a tramo llegan después que la
+            // ruta: la propuesta del cuadro se actualiza con ellos
+            if propuestaEnCuadro { mandarPropuesta() }
+        }
+    }
     @Published private(set) var detallesFallidos: Set<Int> = []
     /// Hay otras rutas dentro del tiempo extra, aunque con menos curvas que la
     /// más rápida (elegirVariantes).
@@ -390,7 +399,7 @@ final class Navegacion: ObservableObject {
     /// despierta y la orden no llega.
     func ordenDelCuadro(_ orden: OrdenRuta, ruta: RutaGuardada?) {
         switch orden.codigo {
-        case .empezar?:
+        case .calcular?:
             guard !navegando, !preparando, let ruta else {
                 enlace?.ponerEstadoOrden(.noSePudo, eco: orden.contador)
                 return
@@ -409,11 +418,28 @@ final class Navegacion: ObservableObject {
             }
             ordenEnFondo = enFondo
             ordenCuadro = orden.contador
-            iniciarAlCalcular = true
+            proponerAlCalcular = true
             enlace?.ponerEstadoOrden(.calculando, eco: orden.contador)
+        case .empezar?:
+            // «Iniciar» en la pantalla de confirmar del cuadro
+            guard propuestaEnCuadro, destino != nil, !navegando, !preparando else {
+                enlace?.ponerEstadoOrden(.noSePudo, eco: orden.contador)
+                return
+            }
+            propuestaEnCuadro = false
+            ordenCuadro = orden.contador
+            enlace?.ponerEstadoOrden(.calculando, eco: orden.contador)
+            iniciar()
         case .cancelar?:
-            if ordenCuadro != nil && !navegando {
+            if (ordenCuadro != nil || propuestaEnCuadro) && !navegando {
                 cancelarRuta()
+            }
+            enlace?.ponerEstadoOrden(.ninguna, eco: orden.contador)
+        case .terminar?:
+            // «Terminar» en el mapa del cuadro: como el botón de la app; el GPS
+            // se apaga (terminar)
+            if navegando {
+                terminar()
             }
             enlace?.ponerEstadoOrden(.ninguna, eco: orden.contador)
         case nil:
@@ -431,7 +457,34 @@ final class Navegacion: ObservableObject {
         }
         ordenCuadro = nil
         ordenEnFondo = false
-        iniciarAlCalcular = false
+        proponerAlCalcular = false
+        propuestaEnCuadro = false
+        terminarTiempoEnFondo()
+    }
+
+    /// La ruta calculada al cuadro, para confirmar (estado 4, v0.14): la del
+    /// tipo de la ruta tocada si ha salido (si no, la que haya quedado
+    /// elegida, normalmente la más rápida, con el aviso), con el peaje y la
+    /// autopista como en la tarjeta.
+    private func mandarPropuesta() {
+        guard let ordenCuadro,
+              let variante = variantes.first(where: { $0.tipos.contains(elegida) }) ?? variantes.first
+        else { return }
+        let rapida = variantes.first { $0.tipos.contains(.rapida) }
+        let detalle = detalles[variante.indice]
+        let tipo = variante.tipos.contains(elegida) ? elegida : variante.tipo
+        let pedido = rutaCargada.flatMap { TipoVariante(rawValue: $0.tipo) }
+        let propuesta = PropuestaRuta(
+            tipo: RutaCuadro.codigo(tipo: tipo.rawValue),
+            otroTipo: pedido.map { !variante.tipos.contains($0) } ?? false,
+            metros: variante.metros, segundos: variante.segundos, curvas: variante.curvas,
+            segundosDeMas: rapida.map { max(0, variante.segundos - $0.segundos) },
+            metrosPeaje: detalle?.metrosPeaje ?? variante.metrosPeaje,
+            metrosAutopista: detalle?.metrosAutopista ?? variante.metrosAutopista
+        )
+        propuestaEnCuadro = true
+        enlace?.ponerEstadoOrden(.propuesta, eco: ordenCuadro, propuesta: propuesta)
+        // Con la propuesta en el cuadro, la app sigue despierta por el GPS
         terminarTiempoEnFondo()
     }
 
@@ -625,13 +678,13 @@ final class Navegacion: ObservableObject {
             aviso = "No se encontró ninguna ruta."
         }
         calculos += 1
-        // Orden del cuadro: empieza sola en cuanto hay propuestas
-        if iniciarAlCalcular {
-            iniciarAlCalcular = false
+        // Orden del cuadro (v0.14): la ruta, al cuadro para confirmar
+        if proponerAlCalcular {
+            proponerAlCalcular = false
             if variantes.isEmpty {
                 terminarOrden(.noSePudo)
             } else {
-                iniciar()
+                mandarPropuesta()
             }
         }
     }
@@ -799,7 +852,7 @@ final class Navegacion: ObservableObject {
         // desde entonces se ha alejado de la ruta, Ferrostar la daría por
         // desviada nada más empezar y recalcularía otra
         if !simular, let destino, seHaAlejado(de: candidata) {
-            iniciarAlCalcular = ordenCuadro != nil
+            proponerAlCalcular = ordenCuadro != nil
             pedirVariantes(
                 hacia: destino,
                 aviso: "Te has alejado de la ruta desde que se calculó: se vuelven a calcular las rutas."
@@ -814,7 +867,7 @@ final class Navegacion: ObservableObject {
             guard let ruta = Self.emparejar(candidata, en: rutas) else {
                 let aviso = "Las rutas han cambiado en el servidor desde que se calcularon. Se vuelven a calcular: elige otra vez y pulsa «Iniciar»."
                 if let destino {
-                    iniciarAlCalcular = ordenCuadro != nil
+                    proponerAlCalcular = ordenCuadro != nil
                     pedirVariantes(hacia: destino, aviso: aviso)
                 } else {
                     self.aviso = aviso
