@@ -1433,3 +1433,25 @@ Ferrostar:
   la sesión de actividad en segundo plano (`ProveedorUbicacion.reiniciarEnFondo`).
   El registro de «Placa» apunta si llega una posición en 10 s.
 - **Sin probar** en el iPhone.
+
+### 2026-10-10 · La sesión de actividad en segundo plano se mantiene (0.20.3)
+
+- **El autor, con la 0.20.2:** la primera ruta desde el cuadro va bien; tras
+  cancelar, la segunda sale pero el GPS no se despierta (sin la flecha de
+  ubicación con el iPhone bloqueado) y la tercera pide abrir la app.
+- **Hipótesis:** con «Mientras se usa la app», la app solo cuenta como «en
+  uso» en segundo plano mientras mantiene una sesión de actividad en segundo
+  plano (`CLBackgroundActivitySession`) creada estando en uso; al soltarla
+  al cancelar, con el iPhone bloqueado, ya no la recupera hasta abrir la app
+  (deducido del comportamiento y de WWDC24 «What's new in location
+  authorization»; sin comprobar en la documentación).
+- **Cambio (aceptado por el autor, sabiendo que iOS puede enseñar el
+  indicador de ubicación):** la sesión se crea con la app abierta y se
+  mantiene mientras la app vive, no solo mientras está conectada al cuadro
+  (al apagar la moto se desconecta y habría que volver a abrir la app); al
+  dejar de guiar ya no se suelta. Sin ruta no se piden posiciones.
+- **Diagnóstico:** el registro de «Placa» apunta cuándo se crean las
+  sesiones y, con iOS 18, por qué no llegan posiciones (la app no está lo
+  bastante «en uso», hace falta sesión, posición no disponible o iPhone
+  quieto), solo cuando cambia.
+- **Sin probar** en el iPhone.

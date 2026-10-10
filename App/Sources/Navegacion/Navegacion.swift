@@ -293,6 +293,12 @@ final class Navegacion: ObservableObject {
     private var ultimaPeticion: ContinuousClock.Instant?
 
     init() {
+        // El registro de «Placa», con lo que pasa con el GPS (0.20.3)
+        ubicacion.alDiagnostico = { [weak self] texto in
+            MainActor.assumeIsolated {
+                self?.enlace?.anotarDesdeFuera(texto)
+            }
+        }
         ubicacion.alCambiar = { [weak self] posicion in
             MainActor.assumeIsolated {
                 self?.posicionNueva(posicion)

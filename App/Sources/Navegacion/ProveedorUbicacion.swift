@@ -63,13 +63,37 @@ final class ProveedorUbicacion: NSObject, LocationProviding, CLLocationManagerDe
         if activo {
             if sesionFondo == nil {
                 sesionFondo = CLBackgroundActivitySession()
+                alDiagnostico?("Sesión de actividad en segundo plano creada al iniciar")
             }
             gestor.stopUpdatingLocation()
             gestor.startUpdatingLocation()
-        } else {
-            sesionFondo?.invalidate()
-            sesionFondo = nil
         }
+        // Desde la 0.20.3 la sesión no se suelta al dejar de guiar: soltarla
+        // con la app en segundo plano le quita el «en uso» y el cuadro ya no
+        // podía volver a arrancar el GPS hasta abrir la app (lo vio el autor:
+        // la segunda ruta sin GPS, la tercera «abre la app"). Sin ruta no se
+        // piden posiciones: el GPS sigue apagado (apagar)
+    }
+
+    /// Lo que pasa con el GPS, para el registro de «Placa» (0.20.3): por qué
+    /// iOS no da posiciones (iOS 18) y cuándo se crean las sesiones.
+    var alDiagnostico: ((String) -> Void)?
+    private var ultimoDiagnostico = ""
+
+    private func diagnosticar(_ actualizacion: CLLocationUpdate) {
+        var partes: [String] = []
+        if #available(iOS 18.0, *) {
+            if actualizacion.insufficientlyInUse { partes.append("la app no está lo bastante «en uso»") }
+            if actualizacion.serviceSessionRequired { partes.append("hace falta una sesión de servicio") }
+            if actualizacion.locationUnavailable { partes.append("posición no disponible") }
+            if actualizacion.stationary { partes.append("iPhone quieto: posiciones en pausa") }
+        } else if actualizacion.isStationary {
+            partes.append("iPhone quieto: posiciones en pausa")
+        }
+        let texto = partes.joined(separator: ", ")
+        guard texto != ultimoDiagnostico else { return }
+        ultimoDiagnostico = texto
+        alDiagnostico?(texto.isEmpty ? "GPS: llegan posiciones" : "GPS: " + texto)
     }
 
     // MARK: - CLLocationManagerDelegate
@@ -99,6 +123,14 @@ final class ProveedorUbicacion: NSObject, LocationProviding, CLLocationManagerDe
             sesionServicio = CLServiceSession(authorization: .whenInUse)
             sesionDePrimerPlano = primerPlano
         }
+        // Y la sesión de actividad en segundo plano (0.20.3), con la app
+        // abierta y para toda su vida: es la que la deja «en uso» con el
+        // iPhone bloqueado para arrancar el GPS desde el cuadro. Puede hacer
+        // que iOS enseñe el indicador de ubicación (aceptado por el autor)
+        if primerPlano && sesionFondo == nil {
+            sesionFondo = CLBackgroundActivitySession()
+            alDiagnostico?("Sesión de actividad en segundo plano creada con la app abierta")
+        }
     }
 
     func arrancarEnFondo() {
@@ -115,6 +147,7 @@ final class ProveedorUbicacion: NSObject, LocationProviding, CLLocationManagerDe
             do {
                 for try await actualizacion in CLLocationUpdate.liveUpdates(.automotiveNavigation) {
                     if Task.isCancelled { break }
+                    await MainActor.run { self?.diagnosticar(actualizacion) }
                     guard let posicion = actualizacion.location else { continue }
                     await MainActor.run { self?.recibir([posicion]) }
                 }
@@ -134,7 +167,9 @@ final class ProveedorUbicacion: NSObject, LocationProviding, CLLocationManagerDe
         tareaEnVivo = nil
         if sesionFondo == nil {
             sesionFondo = CLBackgroundActivitySession()
+            alDiagnostico?("Sesión de actividad en segundo plano creada en segundo plano")
         }
+        ultimoDiagnostico = ""
         arrancarEnFondo()
     }
 
