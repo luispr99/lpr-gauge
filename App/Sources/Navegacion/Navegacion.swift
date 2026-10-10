@@ -159,7 +159,12 @@ final class Navegacion: ObservableObject {
     // MARK: Rutas propuestas
     @Published private(set) var destino: ResultadoBusqueda?
     @Published private(set) var variantes: [VarianteRuta] = []
-    @Published var elegida: TipoVariante = .rapida
+    @Published var elegida: TipoVariante = .rapida {
+        didSet {
+            // Elegida otra en la app con la propuesta en el cuadro (0.21.3)
+            if propuestaEnCuadro && elegida != oldValue { mandarPropuesta() }
+        }
+    }
     @Published private(set) var calculando = false
     /// Sube cada vez que termina un cálculo de rutas (para encuadrar el mapa).
     @Published private(set) var calculos = 0
@@ -349,7 +354,7 @@ final class Navegacion: ObservableObject {
     /// enseñando una ruta suya, se deja; sin ruta, el GPS y (con «Siempre»)
     /// las sesiones, apagados. Guiando, no se toca nada.
     func cuadroDesconectado() {
-        guard !navegando else { return }
+        guard !navegando, !preparando else { return }
         if ordenCuadro != nil || propuestaEnCuadro {
             cancelarRuta()
         } else if destino == nil {
@@ -389,7 +394,9 @@ final class Navegacion: ObservableObject {
     private func posicionReciente(esperando segundos: Double = 10) async -> UserLocation? {
         let limite = Date().addingTimeInterval(segundos)
         while true {
-            if let ultima = ubicacion.lastLocation, Date().timeIntervalSince(ultima.timestamp) < 30 {
+            // 5 s como mucho (0.21.3; antes 30): con el GPS apagado entre
+            // rutas, en marcha una de 30 s puede ser de cientos de metros atrás
+            if let ultima = ubicacion.lastLocation, Date().timeIntervalSince(ultima.timestamp) < 5 {
                 return ultima
             }
             if Date() >= limite || Task.isCancelled { return nil }
@@ -471,12 +478,12 @@ final class Navegacion: ObservableObject {
             // el GPS desde aquí (ProveedorUbicacion.arrancarEnFondo) y se pide
             // a iOS tiempo para calcular; si no llegan posiciones, «abre la app»
             let enFondo = UIApplication.shared.applicationState != .active
+            cargar(ruta)
+            // Después de cargar (0.21.3): cargar → cancelarRuta → terminarOrden
+            // soltaba el tiempo pedido antes (lo vio la revisión)
             if enFondo {
                 enlace?.anotarDesdeFuera("Orden del cuadro con la app en segundo plano: se intenta arrancar el GPS")
                 pedirTiempoEnFondo()
-            }
-            cargar(ruta)
-            if enFondo {
                 ubicacion.arrancarEnFondo()
             }
             ordenEnFondo = enFondo
@@ -485,7 +492,7 @@ final class Navegacion: ObservableObject {
             enlace?.ponerEstadoOrden(.calculando, eco: orden.contador)
         case .empezar?:
             // «Iniciar» en la pantalla de confirmar del cuadro
-            guard propuestaEnCuadro, destino != nil, !navegando, !preparando else {
+            guard propuestaEnCuadro, destino != nil, !variantes.isEmpty, !navegando, !preparando else {
                 enlace?.ponerEstadoOrden(.noSePudo, eco: orden.contador)
                 return
             }
@@ -525,11 +532,39 @@ final class Navegacion: ObservableObject {
                 enlace?.anotarDesdeFuera("Orden del cuadro en segundo plano: \(estado == .ninguna ? "hecha" : "no se pudo (\(estado.rawValue))")")
             }
         }
+        let eraDelCuadro = ordenCuadro != nil
         ordenCuadro = nil
         ordenEnFondo = false
         proponerAlCalcular = false
         propuestaEnCuadro = false
         terminarTiempoEnFondo()
+        // Una orden del cuadro que no ha salido (0.21.3): la ruta que cargó se
+        // deja y el GPS se apaga; si no, seguía encendido hasta abrir la app
+        // (lo vio la revisión). En la vuelta siguiente, cuando ya no se esté
+        // preparando (iniciar lo deja en su defer)
+        if eraDelCuadro && (estado == .noSePudo || estado == .abreLaApp) {
+            Task { @MainActor [weak self] in
+                guard let self, !self.navegando, !self.preparando, self.ordenCuadro == nil,
+                      !self.propuestaEnCuadro else { return }
+                self.cancelarRuta()
+            }
+        }
+    }
+
+    /// Plazo de la propuesta en el cuadro (0.21.3): si en 2,5 min no llega
+    /// «Iniciar» ni «Cancelar» (el cuadro puede haber cambiado de cara), se
+    /// deja y el GPS se apaga.
+    private var plazoPropuesta: Task<Void, Never>?
+
+    private func vigilarPropuesta(orden: UInt8) {
+        plazoPropuesta?.cancel()
+        plazoPropuesta = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(150))
+            guard !Task.isCancelled, let self, self.propuestaEnCuadro, self.ordenCuadro == orden,
+                  !self.navegando, !self.preparando else { return }
+            self.enlace?.anotarDesdeFuera("Propuesta del cuadro sin respuesta en 2,5 min: se deja")
+            self.cancelarRuta()
+        }
     }
 
     /// La ruta calculada al cuadro, para confirmar (estado 4, v0.14): la del
@@ -553,6 +588,7 @@ final class Navegacion: ObservableObject {
             metrosAutopista: detalle?.metrosAutopista ?? variante.metrosAutopista
         )
         propuestaEnCuadro = true
+        vigilarPropuesta(orden: ordenCuadro)
         enlace?.ponerEstadoOrden(.propuesta, eco: ordenCuadro, propuesta: propuesta)
         // Con la propuesta en el cuadro, la app sigue despierta por el GPS
         terminarTiempoEnFondo()
@@ -641,6 +677,12 @@ final class Navegacion: ObservableObject {
     /// `aviso`: lo que se muestra mientras se calcula (por qué se recalcula).
     private func pedirVariantes(hacia lugar: ResultadoBusqueda, aviso avisoInicial: String? = nil) {
         encenderGPS()
+        // Con una orden o una propuesta del cuadro en curso (0.21.3), la ruta
+        // nueva vuelve a ir al cuadro (si no, se quedaba la vieja o la orden
+        // sin contestar; lo vio la revisión)
+        if ordenCuadro != nil || propuestaEnCuadro {
+            proponerAlCalcular = true
+        }
         tareaVariantes?.cancel()
         tareaInicio?.cancel()
         preparando = false
@@ -807,6 +849,9 @@ final class Navegacion: ObservableObject {
         sinRutaPorTierra = !soloAsfalto && eleccion.porTierra == nil
         // Los km tramo a tramo de las que se ven y aún no los tienen
         pedirDetalles()
+        // Con la propuesta en el cuadro, la que quede (margen o elegida
+        // cambiados en la app; 0.21.3)
+        if propuestaEnCuadro { mandarPropuesta() }
     }
 
     private func olvidarDetalles() {

@@ -355,6 +355,7 @@ final class EnlaceBLE: NSObject, ObservableObject {
     }
 
     private func perdido(_ periferico: CBPeripheral, error: Error?, alConectar: Bool) {
+        ultimaOrden = 0
         if !alConectar {
             alDesconectar?()
         }
@@ -406,7 +407,9 @@ final class EnlaceBLE: NSObject, ObservableObject {
         ecoOrden = 0
         propuestaCuadro = nil
         listasMandadas.removeAll()
-        ultimaOrden = 0
+        // ultimaOrden no se pone a 0 aquí (0.21.3): con «servicios
+        // cambiados» la conexión sigue y el cuadro no reinicia su contador; la
+        // última orden se habría vuelto a ejecutar. Se pone a 0 al desconectar
         info = nil
         mantenimiento?.invalidate()
         mantenimiento = nil
@@ -1226,6 +1229,8 @@ final class EnlaceBLE: NSObject, ObservableObject {
             empezar()
         case .poweredOff:
             estado = .bluetoothApagado
+            ultimaOrden = 0
+            alDesconectar?()
             olvidarCaracteristicas()
             pararBusqueda()
             anotar("Bluetooth apagado")

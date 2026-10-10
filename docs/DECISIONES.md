@@ -1497,3 +1497,26 @@ Ferrostar:
 - **Cambio:** la sección «Ubicación» de «Placa» enseña el permiso y las 20
   últimas líneas sobre el GPS, las sesiones y las órdenes del cuadro, con la
   hora (sin posiciones).
+
+### 2026-10-10 · Arreglos de la revisión de las órdenes del cuadro (0.21.3)
+
+Una revisión del código (agente, a petición del autor) encontró fallos en el
+intercambio de órdenes entre el cuadro y la app; el autor pidió arreglar
+todos:
+- Una orden del cuadro que no sale (sin GPS, sin ruta, error al empezar)
+  dejaba el GPS encendido y la ruta cargada: ahora se deja la ruta y se
+  apaga (`terminarOrden`, en la vuelta siguiente).
+- La propuesta en el cuadro sin respuesta en 2,5 min se deja (el cuadro
+  puede haber cambiado de cara); el cuadro, además, cancela al vencer sus
+  plazos y al cambiar de cara (firmware, sección 93).
+- El tiempo de iOS para la orden «calcular» se pedía antes de `cargar`,
+  que lo soltaba: ahora, después.
+- Recalcular con una orden o propuesta del cuadro en curso vuelve a
+  proponer; cambiar la elegida o el margen en la app reenvía la propuesta;
+  «empezar» sin propuestas contesta «no se pudo».
+- Un corte de Bluetooth mientras se prepara la ruta ya no la cancela, y
+  apagar el Bluetooth del iPhone avisa como una desconexión.
+- «Servicios cambiados» ya no olvida la última orden atendida (se habría
+  vuelto a ejecutar): solo al desconectar.
+- La posición para calcular, de 5 s como mucho (antes 30: en marcha, con el
+  GPS apagado entre rutas, podían ser cientos de metros).
