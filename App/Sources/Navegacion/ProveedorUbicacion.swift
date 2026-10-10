@@ -85,6 +85,21 @@ final class ProveedorUbicacion: NSObject, LocationProviding, CLLocationManagerDe
     private var sesionServicio: AnyObject?
     private var tareaEnVivo: Task<Void, Never>?
     private(set) var enVivo = false
+    /// Si la sesión de servicio se creó con la app abierta (para el registro).
+    private(set) var sesionDePrimerPlano = false
+
+    /// La sesión de servicio, creada con la app abierta y mantenida mientras
+    /// vive (0.20.1): la 0.20.0 la soltaba al apagar el GPS y, desde el
+    /// segundo plano, iOS no dejaba crear otra (al cancelar una ruta en el
+    /// cuadro y tocar otra: sin posiciones; lo vio el autor). Mantenerla no
+    /// enciende el GPS: solo deja empezar las posiciones desde el segundo
+    /// plano (supuesto, a comprobar en el iPhone).
+    func mantenerSesion(primerPlano: Bool) {
+        if #available(iOS 18.0, *), sesionServicio == nil {
+            sesionServicio = CLServiceSession(authorization: .whenInUse)
+            sesionDePrimerPlano = primerPlano
+        }
+    }
 
     func arrancarEnFondo() {
         let modos = Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String] ?? []
@@ -92,9 +107,7 @@ final class ProveedorUbicacion: NSObject, LocationProviding, CLLocationManagerDe
             gestor.allowsBackgroundLocationUpdates = true
             gestor.showsBackgroundLocationIndicator = true
         }
-        if #available(iOS 18.0, *), sesionServicio == nil {
-            sesionServicio = CLServiceSession(authorization: .whenInUse)
-        }
+        mantenerSesion(primerPlano: false)
         gestor.startUpdatingLocation()
         guard tareaEnVivo == nil else { return }
         enVivo = true
@@ -111,13 +124,14 @@ final class ProveedorUbicacion: NSObject, LocationProviding, CLLocationManagerDe
         }
     }
 
-    /// GPS apagado del todo (a petición del autor: al terminar una ruta, hasta
-    /// que se ponga otra): las actualizaciones, las sesiones y el segundo plano.
+    /// GPS apagado (a petición del autor: al terminar una ruta, hasta que se
+    /// ponga otra): las actualizaciones y el segundo plano. La sesión de
+    /// servicio se queda (mantenerSesion): sin ella no se podría volver a
+    /// empezar desde el cuadro.
     func apagar() {
         tareaEnVivo?.cancel()
         tareaEnVivo = nil
         enVivo = false
-        sesionServicio = nil
         guiadoEnFondo(false)
         gestor.allowsBackgroundLocationUpdates = false
         gestor.stopUpdatingLocation()

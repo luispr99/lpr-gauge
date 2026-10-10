@@ -306,6 +306,29 @@ final class Navegacion: ObservableObject {
         }
         // El GPS no se enciende al abrir la app (desde la 0.19.0): solo con un
         // destino, para calcular y guiar, y se apaga al acabar (encenderGPS)
+        // La sesión de servicio, con la app abierta (0.20.1); y al volver a
+        // primer plano, la sesión y, con un destino sin rutas (por ejemplo,
+        // tras una orden del cuadro sin GPS), otra vez el GPS y las rutas
+        ubicacion.mantenerSesion(primerPlano: UIApplication.shared.applicationState == .active)
+        avisoActiva = NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.vuelveAPrimerPlano()
+            }
+        }
+    }
+
+    private var avisoActiva: NSObjectProtocol?
+
+    private func vuelveAPrimerPlano() {
+        ubicacion.mantenerSesion(primerPlano: true)
+        guard !navegando, !preparando, let destino else { return }
+        if variantes.isEmpty && !calculando {
+            pedirVariantes(hacia: destino)
+        } else {
+            encenderGPS()
+        }
     }
 
     // MARK: - GPS solo con ruta (0.19.0)
@@ -610,7 +633,7 @@ final class Navegacion: ObservableObject {
             aviso = "Todavía no hay posición GPS. Espera unos segundos y vuelve a elegir el destino."
             // Desde el cuadro con la app en segundo plano: iOS no ha dado el GPS
             if ordenEnFondo {
-                enlace?.anotarDesdeFuera("Orden del cuadro con la app en segundo plano: sin posiciones GPS en 10 s")
+                enlace?.anotarDesdeFuera("Orden del cuadro con la app en segundo plano: sin posiciones GPS en 10 s (sesión de servicio \(ubicacion.sesionDePrimerPlano ? "creada con la app abierta" : "creada en segundo plano"))")
                 terminarOrden(.abreLaApp)
             } else {
                 terminarOrden(.noSePudo)

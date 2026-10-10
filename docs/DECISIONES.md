@@ -1402,3 +1402,19 @@ Ferrostar:
   de la app (y apaga el GPS).
 - **Sin probar:** sin compilar en local; las pruebas de `Core` corren en el
   CI. Sin probar en el iPhone ni con el cuadro.
+
+### 2026-10-10 · La sesión de ubicación se mantiene (0.20.1)
+
+- **El autor:** tras cancelar una ruta en el cuadro y tocar otra, «se queda
+  pensando»: la orden contestó el estado 2 (sin posiciones GPS en 10 s); al
+  abrir la app, «Todavía no hay posición GPS».
+- **Causa probable:** la 0.20.0 soltaba la sesión de servicio de ubicación al
+  apagar el GPS, y desde el segundo plano iOS no deja crear otra; la primera
+  vez funcionó porque se creó poco después de estar la app abierta
+  (supuesto: no está documentado).
+- **Cambio:** la sesión (`CLServiceSession`, iOS 18) se crea con la app
+  abierta y se mantiene; al apagar el GPS solo se paran las posiciones. Al
+  volver la app a primer plano con un destino sin rutas, enciende el GPS y
+  recalcula. El registro de «Placa» dice, si falla, si la sesión se creó con
+  la app abierta o en segundo plano.
+- **Sin probar** en el iPhone.
