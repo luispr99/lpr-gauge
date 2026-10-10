@@ -1487,3 +1487,13 @@ Ferrostar:
   el icono es lo esperado: se ve en «Placa».)
 - **Cambio:** con «Siempre», al cambiar el permiso y al abrir la app, si no
   hay ruta ni GPS en marcha, se sueltan (`ProveedorUbicacion.soltarSiSobran`).
+
+### 2026-10-10 · Sección «Ubicación» en «Placa» (0.21.2)
+
+- **El autor** no encontraba el permiso de ubicación en «Placa»: las líneas
+  que se le pedía mirar «en el registro» iban, desde la 0.8.2, al registro
+  del sistema, que solo se lee desde un Mac (error de las indicaciones de
+  las 0.19.0-0.21.1).
+- **Cambio:** la sección «Ubicación» de «Placa» enseña el permiso y las 20
+  últimas líneas sobre el GPS, las sesiones y las órdenes del cuadro, con la
+  hora (sin posiciones).

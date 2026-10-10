@@ -138,6 +138,25 @@ struct PlacaView: View {
                 } footer: {
                     Text("La precisión de la posición, para el punto de color del GPS en la cara de navegación. La posición no se manda.")
                 }
+
+                // Desde la 0.21.2: el permiso y lo último que ha pasado con
+                // el GPS y las órdenes del cuadro, para probar las rutas desde
+                // el cuadro con el iPhone bloqueado
+                Section {
+                    LabeledContent("Permiso") { Text(verbatim: enlace.permisoUbicacion ?? "sin dato") }
+                    if enlace.eventosUbicacion.isEmpty {
+                        Text("Nada todavía")
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(Array(enlace.eventosUbicacion.enumerated()), id: \.offset) { _, linea in
+                        Text(verbatim: linea)
+                            .font(.footnote)
+                    }
+                } header: {
+                    Text("Ubicación")
+                } footer: {
+                    Text("Para las rutas desde el cuadro: «Siempre» deja empezar con el iPhone bloqueado sin tener la ubicación activa sin ruta. Las últimas 20 líneas, de la más reciente a la más antigua.")
+                }
             }
             .scrollDismissesKeyboard(.interactively)
             .botonOcultarTeclado()

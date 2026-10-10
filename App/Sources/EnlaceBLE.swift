@@ -181,7 +181,20 @@ final class EnlaceBLE: NSObject, ObservableObject {
     /// app (la navegación, con las órdenes del cuadro).
     func anotarDesdeFuera(_ texto: String) {
         anotar(texto)
+        // Y a la vista, en «Placa» (0.21.2): el registro del sistema solo se
+        // lee desde un Mac. Las 20 últimas, con la hora; sin posiciones
+        let hora = Date().formatted(date: .omitted, time: .standard)
+        eventosUbicacion.insert("\(hora) · \(texto)", at: 0)
+        if eventosUbicacion.count > 20 { eventosUbicacion.removeLast() }
+        if texto.hasPrefix("Permiso de ubicación: ") {
+            permisoUbicacion = String(texto.dropFirst("Permiso de ubicación: ".count))
+        }
     }
+
+    /// Lo último que ha pasado con el GPS y las órdenes del cuadro, de lo más
+    /// reciente a lo más antiguo, y el permiso de ubicación (para «Placa»).
+    @Published private(set) var eventosUbicacion: [String] = []
+    @Published private(set) var permisoUbicacion: String?
 
     /// Manda ahora el estado de la batería, sin esperar al mantenimiento.
     func reenviar() {
@@ -532,7 +545,7 @@ final class EnlaceBLE: NSObject, ObservableObject {
                 let ruta = lista.flatMap { Int(orden.ruta) < $0.count ? $0[Int(orden.ruta)] : nil }
                 let que = orden.codigo == .cancelar ? "cancelar" : orden.codigo == .empezar ? "empezar"
                     : orden.codigo == .terminar ? "terminar" : "calcular"
-                anotar("Orden de ruta del cuadro: \(que) la \(Int(orden.ruta) + 1)ª")
+                anotarDesdeFuera("Orden de ruta del cuadro: \(que) la \(Int(orden.ruta) + 1)ª")
                 alRecibirOrden?(orden, ruta)
             }
             // El eco de NAV va siempre (byte 1); solo vale si la placa lo admite.
@@ -1239,7 +1252,7 @@ extension EnlaceBLE: CBCentralManagerDelegate {
             if let restaurado = perifericos.first {
                 self.periferico = restaurado
                 restaurado.delegate = self
-                self.anotar("iOS ha vuelto a abrir la app por la placa (restauración de Bluetooth)")
+                self.anotarDesdeFuera("iOS ha vuelto a abrir la app por la placa (restauración de Bluetooth)")
             }
         }
     }
