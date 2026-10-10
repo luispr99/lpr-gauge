@@ -1418,3 +1418,18 @@ Ferrostar:
   recalcula. El registro de «Placa» dice, si falla, si la sesión se creó con
   la app abierta o en segundo plano.
 - **Sin probar** en el iPhone.
+
+### 2026-10-10 · El GPS vuelve a arrancar al pulsar «Iniciar» en el cuadro (0.20.2)
+
+- **El autor:** «no en todas las ocasiones se despierta el gps. Si que
+  muestra la ruta pero el gps se queda rojo y no hay simbolo de ubicacion en
+  el iphone a no ser que entres en la app».
+- **Hipótesis:** la ruta se calcula con la última posición (de 30 s o
+  menos), pero mientras la propuesta espera en el cuadro iOS deja de mandar
+  posiciones y la app se duerme; al pulsar «Iniciar», la app empezaba a
+  guiar sin volver a arrancar el GPS en segundo plano.
+- **Cambio:** con la orden de empezar y la app en segundo plano, se pide
+  tiempo a iOS y se vuelven a arrancar desde cero las posiciones en vivo, con
+  la sesión de actividad en segundo plano (`ProveedorUbicacion.reiniciarEnFondo`).
+  El registro de «Placa» apunta si llega una posición en 10 s.
+- **Sin probar** en el iPhone.

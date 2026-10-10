@@ -321,6 +321,21 @@ final class Navegacion: ObservableObject {
 
     private var avisoActiva: NSObjectProtocol?
 
+    /// Tras «Iniciar» desde el cuadro con la app en segundo plano: apunta en
+    /// el registro de «Placa» si llega una posición nueva en 10 s.
+    private var esperandoPosicion: Date?
+
+    private func vigilarPrimeraPosicion() {
+        let desde = Date()
+        esperandoPosicion = desde
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(10))
+            guard let self, self.esperandoPosicion == desde else { return }
+            self.esperandoPosicion = nil
+            self.enlace?.anotarDesdeFuera("Iniciar desde el cuadro en segundo plano: sin posiciones GPS en 10 s")
+        }
+    }
+
     private func vuelveAPrimerPlano() {
         ubicacion.mantenerSesion(primerPlano: true)
         guard !navegando, !preparando, let destino else { return }
@@ -452,6 +467,13 @@ final class Navegacion: ObservableObject {
             propuestaEnCuadro = false
             ordenCuadro = orden.contador
             enlace?.ponerEstadoOrden(.calculando, eco: orden.contador)
+            // Con la app en segundo plano (0.20.2): tiempo de iOS y el GPS otra
+            // vez desde cero, y en el registro si llega la primera posición
+            if UIApplication.shared.applicationState != .active {
+                pedirTiempoEnFondo()
+                ubicacion.reiniciarEnFondo()
+                vigilarPrimeraPosicion()
+            }
             iniciar()
         case .cancelar?:
             if (ordenCuadro != nil || propuestaEnCuadro) && !navegando {
@@ -1459,6 +1481,11 @@ final class Navegacion: ObservableObject {
 
     private func posicionNueva(_ posicion: CLLocation) {
         posicionActual = posicion.coordinate
+        if let desde = esperandoPosicion, posicion.timestamp >= desde {
+            esperandoPosicion = nil
+            let segundos = Int(Date().timeIntervalSince(desde).rounded())
+            enlace?.anotarDesdeFuera("Iniciar desde el cuadro en segundo plano: GPS en marcha (\(segundos) s)")
+        }
         // La distancia del viaje (NAV, v0.10), con el GPS de verdad; con
         // simulación, en actualizar. Precisión negativa: sin dato (no cuenta)
         if navegando, !simulando, !llegada {

@@ -124,6 +124,20 @@ final class ProveedorUbicacion: NSObject, LocationProviding, CLLocationManagerDe
         }
     }
 
+    /// Vuelve a arrancar las posiciones en vivo desde cero, con la app en
+    /// segundo plano (0.20.2): al pulsar «Iniciar» en el cuadro tras un rato
+    /// con la propuesta en pantalla, iOS podía haber dejado de mandarlas (el
+    /// GPS del cuadro en rojo y sin la flecha de ubicación en el iPhone; lo
+    /// vio el autor). También la sesión de actividad en segundo plano (iOS 17).
+    func reiniciarEnFondo() {
+        tareaEnVivo?.cancel()
+        tareaEnVivo = nil
+        if sesionFondo == nil {
+            sesionFondo = CLBackgroundActivitySession()
+        }
+        arrancarEnFondo()
+    }
+
     /// GPS apagado (a petición del autor: al terminar una ruta, hasta que se
     /// ponga otra): las actualizaciones y el segundo plano. La sesión de
     /// servicio se queda (mantenerSesion): sin ella no se podría volver a
