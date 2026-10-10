@@ -11,8 +11,8 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "0.20.3"
-    CURRENT_PROJECT_VERSION: "39"
+    MARKETING_VERSION: "0.21.0"
+    CURRENT_PROJECT_VERSION: "40"
     SWIFT_VERSION: "5.0"
 
 packages:
@@ -54,6 +54,12 @@ targets:
         NSLocationWhenInUseUsageDescription: >-
           LPR Gauge usa tu ubicación para calcular la ruta, guiarte giro a giro y
           mostrar la altitud.
+        # «Siempre» (0.21.0, prueba): para empezar una ruta desde el cuadro con
+        # el iPhone bloqueado sin dejar la ubicación activa todo el rato
+        NSLocationAlwaysAndWhenInUseUsageDescription: >-
+          Con «Siempre», LPR Gauge puede empezar una ruta que toques en el cuadro
+          de la moto con el iPhone bloqueado, y solo usa la ubicación mientras
+          calcula o te guía.
         # Segundo plano (2026-10-09): el guiado sigue con la pantalla bloqueada
         # (ubicación) y el enlace con el cuadro también (Bluetooth). No son
         # entitlements: valen con la cuenta gratuita (docs/DECISIONES.md)

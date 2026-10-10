@@ -119,6 +119,8 @@ final class ProveedorUbicacion: NSObject, LocationProviding, CLLocationManagerDe
     /// enciende el GPS: solo deja empezar las posiciones desde el segundo
     /// plano (supuesto, a comprobar en el iPhone).
     func mantenerSesion(primerPlano: Bool) {
+        // Con «Siempre» (0.21.0) no se mantienen: se crean al pedir el GPS
+        guard !siempre else { return }
         if #available(iOS 18.0, *), sesionServicio == nil {
             sesionServicio = CLServiceSession(authorization: .whenInUse)
             sesionDePrimerPlano = primerPlano
@@ -139,7 +141,20 @@ final class ProveedorUbicacion: NSObject, LocationProviding, CLLocationManagerDe
             gestor.allowsBackgroundLocationUpdates = true
             gestor.showsBackgroundLocationIndicator = true
         }
-        mantenerSesion(primerPlano: false)
+        if siempre {
+            // Con «Siempre» (0.21.0): las sesiones, ahora, aunque sea en
+            // segundo plano; se sueltan al apagar
+            if #available(iOS 18.0, *), sesionServicio == nil {
+                sesionServicio = CLServiceSession(authorization: .always)
+                alDiagnostico?("Sesión de servicio («Siempre») creada")
+            }
+            if sesionFondo == nil {
+                sesionFondo = CLBackgroundActivitySession()
+                alDiagnostico?("Sesión de actividad en segundo plano creada («Siempre»)")
+            }
+        } else {
+            mantenerSesion(primerPlano: false)
+        }
         gestor.startUpdatingLocation()
         guard tareaEnVivo == nil else { return }
         enVivo = true
@@ -182,6 +197,13 @@ final class ProveedorUbicacion: NSObject, LocationProviding, CLLocationManagerDe
         tareaEnVivo = nil
         enVivo = false
         guiadoEnFondo(false)
+        // Con «Siempre» (0.21.0), también las sesiones: sin ruta, nada activo
+        if siempre && (sesionFondo != nil || sesionServicio != nil) {
+            sesionFondo?.invalidate()
+            sesionFondo = nil
+            sesionServicio = nil
+            alDiagnostico?("Sesiones de ubicación soltadas («Siempre»)")
+        }
         gestor.allowsBackgroundLocationUpdates = false
         gestor.stopUpdatingLocation()
     }
@@ -203,6 +225,34 @@ final class ProveedorUbicacion: NSObject, LocationProviding, CLLocationManagerDe
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         authorizationStatus = manager.authorizationStatus
+        alDiagnostico?("Permiso de ubicación: \(descripcionPermiso)")
+    }
+
+    // MARK: - Permiso «Siempre» (prueba, 0.21.0)
+
+    /// Con «Siempre», la app no mantiene sesiones sin ruta: las crea al pedir
+    /// el GPS (también en segundo plano, desde el cuadro) y las suelta al
+    /// apagarlo, así que sin ruta no hay indicador de ubicación (lo que pidió
+    /// el autor). Sin «Siempre», como la 0.20.3: sesiones vivas siempre. Que
+    /// iOS deje empezar en segundo plano con «Siempre» está sin comprobar.
+    var siempre: Bool { authorizationStatus == .authorizedAlways }
+
+    var descripcionPermiso: String {
+        switch authorizationStatus {
+        case .authorizedAlways: return "Siempre"
+        case .authorizedWhenInUse: return "Mientras se usa la app"
+        case .denied: return "denegado"
+        case .restricted: return "restringido"
+        default: return "sin decidir"
+        }
+    }
+
+    /// Pide «Siempre» si ahora es «Mientras se usa la app» (iOS lo pregunta
+    /// una vez; después, solo desde Ajustes).
+    func pedirSiempre() {
+        if authorizationStatus == .authorizedWhenInUse {
+            gestor.requestAlwaysAuthorization()
+        }
     }
 }
 

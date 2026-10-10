@@ -185,7 +185,9 @@ final class Navegacion: ObservableObject {
     /// El enlace con el cuadro (lo pone ContentView). El texto, la maniobra, el
     /// trazo y los cruces se le pasan directamente desde aquí, también con la
     /// app en segundo plano
-    weak var enlace: EnlaceBLE?
+    weak var enlace: EnlaceBLE? {
+        didSet { enlace?.anotarDesdeFuera("Permiso de ubicación: \(ubicacion.descripcionPermiso)") }
+    }
     /// Las rutas hechas (pestaña «Rutas»): cada ruta se guarda ahí al pulsar
     /// «Iniciar», también con el simulador (a petición del autor).
     weak var historial: HistorialRutas?
@@ -316,6 +318,7 @@ final class Navegacion: ObservableObject {
         // primer plano, la sesión y, con un destino sin rutas (por ejemplo,
         // tras una orden del cuadro sin GPS), otra vez el GPS y las rutas
         ubicacion.mantenerSesion(primerPlano: UIApplication.shared.applicationState == .active)
+        ubicacion.pedirSiempre()
         avisoActiva = NotificationCenter.default.addObserver(
             forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
@@ -342,7 +345,20 @@ final class Navegacion: ObservableObject {
         }
     }
 
+    /// El cuadro se ha desconectado (0.21.0): si estaba calculando o
+    /// enseñando una ruta suya, se deja; sin ruta, el GPS y (con «Siempre»)
+    /// las sesiones, apagados. Guiando, no se toca nada.
+    func cuadroDesconectado() {
+        guard !navegando else { return }
+        if ordenCuadro != nil || propuestaEnCuadro {
+            cancelarRuta()
+        } else if destino == nil {
+            ubicacion.apagar()
+        }
+    }
+
     private func vuelveAPrimerPlano() {
+        ubicacion.pedirSiempre()
         ubicacion.mantenerSesion(primerPlano: true)
         guard !navegando, !preparando, let destino else { return }
         if variantes.isEmpty && !calculando {

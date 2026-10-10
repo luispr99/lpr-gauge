@@ -39,6 +39,7 @@ struct ContentView: View {
             historial.alCambiar = { rutas in enlace.ponerRutas(rutas) }
             enlace.ponerRutas(historial.paraElCuadro)
             enlace.alRecibirOrden = { orden, ruta in navegacion.ordenDelCuadro(orden, ruta: ruta) }
+            enlace.alDesconectar = { navegacion.cuadroDesconectado() }
         }
     }
 }

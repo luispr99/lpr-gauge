@@ -99,6 +99,8 @@ final class EnlaceBLE: NSObject, ObservableObject {
     /// Lo llama con cada orden de ruta nueva del cuadro y la ruta a la que se
     /// refiere (nil si su lista ya no se conoce).
     var alRecibirOrden: (@MainActor (OrdenRuta, RutaGuardada?) -> Void)?
+    /// Lo llama al perder la conexión con la placa (0.21.0).
+    var alDesconectar: (@MainActor () -> Void)?
     private var trazoPendiente = false
     private var navPendiente = false
     private var crucesPendiente = false
@@ -340,6 +342,9 @@ final class EnlaceBLE: NSObject, ObservableObject {
     }
 
     private func perdido(_ periferico: CBPeripheral, error: Error?, alConectar: Bool) {
+        if !alConectar {
+            alDesconectar?()
+        }
         olvidarCaracteristicas()
         anotar((alConectar ? "No se pudo conectar" : "Desconectado")
                + (error.map { ": \($0.localizedDescription)" } ?? ""))

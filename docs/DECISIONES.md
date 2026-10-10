@@ -1455,3 +1455,24 @@ Ferrostar:
   bastante «en uso», hace falta sesión, posición no disponible o iPhone
   quieto), solo cuando cambia.
 - **Sin probar** en el iPhone.
+
+### 2026-10-10 · Prueba con el permiso de ubicación «Siempre» (0.21.0)
+
+- **El autor:** la 0.20.3 funciona, pero quiere que la ubicación no esté
+  activa sin ruta: sin GPS con la app en segundo plano ni al conectarse el
+  cuadro; GPS desde que toca una ruta en el cuadro; apagado al terminar y
+  otra vez encendido con la siguiente; y apagado al apagar la moto.
+- **Por qué hace falta «Siempre»:** con «Mientras se usa la app», iOS solo
+  deja empezar el GPS en segundo plano con sesiones creadas con la app
+  abierta y mantenidas vivas (0.20.0-0.20.3), y eso deja el indicador de
+  ubicación siempre. Con «Siempre», en principio, la app puede empezar en
+  segundo plano sin nada vivo antes (sin comprobar: en los foros de Apple hay
+  quien tiene problemas incluso así).
+- **Cambio:** la app pide «Siempre» (iOS lo pregunta al abrirla). Con
+  «Siempre», no mantiene sesiones: las crea al pedir el GPS, también desde el
+  cuadro en segundo plano, y las suelta al apagarlo (cancelar, terminar,
+  llegar); al desconectarse el cuadro, si había una ruta suya calculándose o
+  en confirmar, la deja, y sin ruta lo apaga todo. Sin «Siempre», como la
+  0.20.3. El registro de «Placa» apunta el permiso y cuándo se crean y se
+  sueltan las sesiones.
+- **Sin probar:** si no funciona, se vuelve a la 0.20.3.
